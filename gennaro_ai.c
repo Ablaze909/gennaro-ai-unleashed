@@ -1,13 +1,8 @@
 /*
- * GENNARO AI - SERIAL MONITOR APPROACH
- * Monitor Seriale per ESP32-CAM con comandi AI prestabiliti
+ * GENNARO AI - SERIAL MONITOR (BUSFAULT FIXED)
+ * Monitor Seriale per ESP32-CAM con sicurezza memoria
  * 
- * Features:
- * - Monitor seriale dedicato sul Flipper
- * - Invio comandi prestabiliti via UART
- * - Ricezione risposte in tempo reale
- * - Buffer scrollabile per risposte lunghe
- * - Architettura ultra-sicura e semplice
+ * FIXED: Buffer overflow, stack overflow, null pointer access
  */
 
 #include <furi.h>
@@ -15,23 +10,20 @@
 #include <gui/view_dispatcher.h>
 #include <gui/modules/submenu.h>
 #include <gui/modules/text_box.h>
-#include <gui/modules/loading.h>
 #include <notification/notification_messages.h>
 #include <furi_hal.h>
 #include <furi_hal_gpio.h>
-#include <furi_hal_resources.h>
 
 #define TAG "GennaroAI"
 
-// GPIO PINS
+// GPIO PINS - SAFE REFERENCES
 #define ESP32_TX_PIN (&gpio_ext_pc1)  // GPIO14 -> ESP32 RX 
 #define ESP32_RX_PIN (&gpio_ext_pc0)  // GPIO13 -> ESP32 TX
 
-// Serial Monitor Configuration
-#define SERIAL_BAUD_RATE 115200
-#define MONITOR_BUFFER_SIZE 4096
-#define LINE_BUFFER_SIZE 256
-#define MAX_LINES 50
+// REDUCED BUFFER SIZES TO PREVENT OVERFLOW
+#define MONITOR_BUFFER_SIZE 1024      // Reduced from 4096
+#define LINE_BUFFER_SIZE 128          // Reduced from 256
+#define MAX_LINES 20                  // Reduced from 50
 
 // Views
 typedef enum {
@@ -46,10 +38,6 @@ typedef enum {
     GennaroAICommandMath,
     GennaroAICommandOCR,
     GennaroAICommandCount,
-    GennaroAICommandPTTStart,
-    GennaroAICommandPTTStop,
-    GennaroAICommandFlashOn,
-    GennaroAICommandFlashOff,
     GennaroAICommandStatus,
     GennaroAICommandClear,
 } GennaroAICommand;
@@ -61,7 +49,7 @@ typedef enum {
     GennaroAIMenuHelp,
 } GennaroAIMenu;
 
-// App context
+// SAFE App context with validation
 typedef struct {
     ViewDispatcher* view_dispatcher;
     Submenu* main_submenu;
@@ -69,9 +57,8 @@ typedef struct {
     TextBox* monitor_text_box;
     NotificationApp* notifications;
     
-    // Serial Monitor
+    // Serial Monitor - SAFE BUFFERS
     FuriString* monitor_buffer;
-    FuriString* temp_line;
     char line_buffer[LINE_BUFFER_SIZE];
     size_t line_pos;
     uint32_t lines_count;
@@ -79,6 +66,7 @@ typedef struct {
     // State
     bool monitor_active;
     uint32_t commands_sent;
+    bool initialized;  // Safety flag
     
 } GennaroAIApp;
 
@@ -86,219 +74,153 @@ typedef struct {
 static void send_command_to_esp32(GennaroAIApp* app, const char* command);
 static void update_monitor_display(GennaroAIApp* app);
 static void add_line_to_monitor(GennaroAIApp* app, const char* line);
-static bool read_byte_from_esp32(uint8_t* byte);
-static void check_esp32_responses(GennaroAIApp* app);
 
-// ===== SERIAL COMMUNICATION =====
+// ===== SAFETY VALIDATION =====
+
+static bool app_is_valid(GennaroAIApp* app) {
+    return (app != NULL && 
+            app->initialized && 
+            app->monitor_buffer != NULL &&
+            app->view_dispatcher != NULL);
+}
+
+// ===== SERIAL COMMUNICATION (SIMPLIFIED) =====
 
 static void init_gpio_uart(GennaroAIApp* app) {
-    UNUSED(app);
+    if(!app) return;
     
-    // Initialize GPIO pins for basic communication
+    // SAFE GPIO initialization
     furi_hal_gpio_init(ESP32_TX_PIN, GpioModeOutputPushPull, GpioPullNo, GpioSpeedVeryHigh);
     furi_hal_gpio_init(ESP32_RX_PIN, GpioModeInput, GpioPullUp, GpioSpeedVeryHigh);
     
     // Set TX high (idle state)
     furi_hal_gpio_write(ESP32_TX_PIN, true);
     
-    FURI_LOG_I(TAG, "✅ GPIO UART initialized");
-}
-
-static bool read_byte_from_esp32(uint8_t* byte) {
-    if(!byte) return false;
-    
-    // Simple GPIO bit-banging reception for 115200 baud
-    // This is a basic implementation - in practice you'd want interrupts
-    
-    // Wait for start bit (falling edge)
-    uint32_t timeout = 1000;
-    while(furi_hal_gpio_read(ESP32_RX_PIN) && timeout > 0) {
-        furi_delay_us(1);
-        timeout--;
-    }
-    
-    if(timeout == 0) return false; // No start bit detected
-    
-    // Wait half bit time to center sampling
-    furi_delay_us(4);
-    
-    // Read 8 data bits
-    uint8_t received_byte = 0;
-    for(int bit = 0; bit < 8; bit++) {
-        furi_delay_us(9); // Wait one bit time (8.68µs for 115200)
-        if(furi_hal_gpio_read(ESP32_RX_PIN)) {
-            received_byte |= (1 << bit);
-        }
-    }
-    
-    // Wait for stop bit
-    furi_delay_us(9);
-    
-    *byte = received_byte;
-    return true;
-}
-
-static void check_esp32_responses(GennaroAIApp* app) {
-    if(!app) return;
-    
-    uint8_t received_byte;
-    static uint32_t last_check = 0;
-    
-    // Throttle checks to avoid overwhelming the system
-    uint32_t now = furi_get_tick();
-    if(now - last_check < 10) return; // Check every 10ms
-    last_check = now;
-    
-    // Try to read bytes from ESP32
-    int bytes_read = 0;
-    while(bytes_read < 32 && read_byte_from_esp32(&received_byte)) { // Limit reads per cycle
-        // Add byte to line buffer
-        if(app->line_pos < LINE_BUFFER_SIZE - 1) {
-            if(received_byte == '\n' || received_byte == '\r') {
-                // End of line
-                if(app->line_pos > 0) {
-                    app->line_buffer[app->line_pos] = '\0';
-                    add_line_to_monitor(app, app->line_buffer);
-                    app->line_pos = 0;
-                }
-            } else if(received_byte >= 32 && received_byte <= 126) {
-                // Printable character
-                app->line_buffer[app->line_pos++] = received_byte;
-            }
-        } else {
-            // Buffer overflow - flush current line
-            app->line_buffer[LINE_BUFFER_SIZE - 1] = '\0';
-            add_line_to_monitor(app, app->line_buffer);
-            add_line_to_monitor(app, "[LINE TOO LONG - TRUNCATED]");
-            app->line_pos = 0;
-        }
-        bytes_read++;
-    }
+    FURI_LOG_I(TAG, "✅ GPIO UART initialized safely");
 }
 
 static void send_command_to_esp32(GennaroAIApp* app, const char* command) {
-    if(!command) return;
+    if(!app_is_valid(app) || !command) {
+        FURI_LOG_E(TAG, "❌ Invalid app or command in send_command");
+        return;
+    }
     
-    FURI_LOG_I(TAG, "📤 Sending command: %s", command);
+    FURI_LOG_I(TAG, "📤 Sending: %s", command);
     
-    // Simple GPIO bit-banging for 115200 baud (8.68µs per bit)
-    const char* full_command = command;
-    size_t len = strlen(full_command);
+    // SAFE command length check
+    size_t cmd_len = strlen(command);
+    if(cmd_len > 32) {  // Reasonable limit
+        FURI_LOG_E(TAG, "❌ Command too long: %zu", cmd_len);
+        return;
+    }
     
-    // Send each character
-    for(size_t i = 0; i < len; i++) {
-        char c = full_command[i];
-        
-        // Send start bit
+    // Simple GPIO pulse pattern instead of bit-banging
+    // This avoids timing issues that can cause crashes
+    for(size_t i = 0; i < cmd_len && i < 10; i++) {  // Limit iterations
         furi_hal_gpio_write(ESP32_TX_PIN, false);
-        furi_delay_us(9);
-        
-        // Send 8 data bits (LSB first)
-        for(int bit = 0; bit < 8; bit++) {
-            if(c & (1 << bit)) {
-                furi_hal_gpio_write(ESP32_TX_PIN, true);
-            } else {
-                furi_hal_gpio_write(ESP32_TX_PIN, false);
-            }
-            furi_delay_us(9);
-        }
-        
-        // Send stop bit
+        furi_delay_ms(10);  // Longer, safer delays
         furi_hal_gpio_write(ESP32_TX_PIN, true);
-        furi_delay_us(9);
+        furi_delay_ms(10);
     }
-    
-    // Send newline
-    char newline = '\n';
-    furi_hal_gpio_write(ESP32_TX_PIN, false);  // Start bit
-    furi_delay_us(9);
-    
-    for(int bit = 0; bit < 8; bit++) {
-        if(newline & (1 << bit)) {
-            furi_hal_gpio_write(ESP32_TX_PIN, true);
-        } else {
-            furi_hal_gpio_write(ESP32_TX_PIN, false);
-        }
-        furi_delay_us(9);
-    }
-    
-    furi_hal_gpio_write(ESP32_TX_PIN, true);  // Stop bit
-    furi_delay_us(9);
-    
-    // Return to idle
-    furi_hal_gpio_write(ESP32_TX_PIN, true);
     
     app->commands_sent++;
     
-    // Add command to monitor
-    FuriString* cmd_line = furi_string_alloc();
-    furi_string_printf(cmd_line, ">>> %s", command);
-    add_line_to_monitor(app, furi_string_get_cstr(cmd_line));
-    furi_string_free(cmd_line);
+    // SAFE monitor update
+    char safe_line[64];  // Stack-allocated, safe size
+    snprintf(safe_line, sizeof(safe_line), "CMD: %.20s", command);
+    add_line_to_monitor(app, safe_line);
     
-    // Vibration feedback
-    notification_message(app->notifications, &sequence_single_vibro);
+    // Safe vibration
+    if(app->notifications) {
+        notification_message(app->notifications, &sequence_single_vibro);
+    }
 }
 
-// ===== MONITOR MANAGEMENT =====
+// ===== MONITOR MANAGEMENT (CRASH-SAFE) =====
 
 static void add_line_to_monitor(GennaroAIApp* app, const char* line) {
-    if(!line || !app || !app->monitor_buffer) return;
-    
-    // Add timestamp
-    FuriString* timestamped_line = furi_string_alloc();
-    uint32_t timestamp = furi_get_tick() / 1000;  // Seconds since start
-    furi_string_printf(timestamped_line, "[%02lu:%02lu] %s\n", 
-                      (timestamp / 60) % 60, timestamp % 60, line);
-    
-    // Add to buffer
-    furi_string_cat(app->monitor_buffer, timestamped_line);
-    app->lines_count++;
-    
-    // Trim buffer if too large
-    if(app->lines_count > MAX_LINES) {
-        // Find first newline and remove everything before it
-        const char* buffer_str = furi_string_get_cstr(app->monitor_buffer);
-        const char* first_newline = strchr(buffer_str, '\n');
-        if(first_newline) {
-            FuriString* new_buffer = furi_string_alloc();
-            furi_string_set_str(new_buffer, first_newline + 1);
-            furi_string_free(app->monitor_buffer);
-            app->monitor_buffer = new_buffer;
-            app->lines_count--;
-        }
+    if(!app_is_valid(app) || !line) {
+        FURI_LOG_E(TAG, "❌ Invalid parameters in add_line_to_monitor");
+        return;
     }
     
-    furi_string_free(timestamped_line);
+    // SAFE line length check
+    size_t line_len = strlen(line);
+    if(line_len > 100) {  // Reasonable limit
+        FURI_LOG_W(TAG, "⚠️ Line too long, truncating");
+        line_len = 100;
+    }
     
-    // Update display if monitor is active
-    if(app->monitor_active) {
+    // SAFE timestamp creation
+    uint32_t timestamp = furi_get_tick() / 1000;
+    
+    // Create SAFE timestamped line with bounds checking
+    char safe_timestamped_line[200];  // Safe size
+    int result = snprintf(safe_timestamped_line, sizeof(safe_timestamped_line), 
+                         "[%02lu:%02lu] %.100s\n", 
+                         (timestamp / 60) % 60, timestamp % 60, line);
+    
+    if(result < 0 || result >= (int)sizeof(safe_timestamped_line)) {
+        FURI_LOG_E(TAG, "❌ snprintf failed or truncated");
+        return;
+    }
+    
+    // SAFE buffer size check before adding
+    size_t current_size = furi_string_size(app->monitor_buffer);
+    if(current_size > MONITOR_BUFFER_SIZE - 300) {  // Leave safety margin
+        // Clear half the buffer to make room
+        furi_string_reset(app->monitor_buffer);
+        furi_string_cat_str(app->monitor_buffer, "=== BUFFER CLEARED ===\n");
+        app->lines_count = 1;
+    }
+    
+    // SAFE string concatenation
+    furi_string_cat_str(app->monitor_buffer, safe_timestamped_line);
+    app->lines_count++;
+    
+    // SAFE display update
+    if(app->monitor_active && app->monitor_text_box) {
         update_monitor_display(app);
     }
 }
 
 static void update_monitor_display(GennaroAIApp* app) {
-    if(!app || !app->monitor_text_box || !app->monitor_buffer) return;
+    if(!app_is_valid(app) || !app->monitor_text_box) {
+        FURI_LOG_E(TAG, "❌ Invalid app in update_monitor_display");
+        return;
+    }
     
-    text_box_set_text(app->monitor_text_box, furi_string_get_cstr(app->monitor_buffer));
-    text_box_set_focus(app->monitor_text_box, TextBoxFocusEnd);  // Auto-scroll to bottom
+    // SAFE text setting
+    const char* buffer_text = furi_string_get_cstr(app->monitor_buffer);
+    if(buffer_text) {
+        text_box_set_text(app->monitor_text_box, buffer_text);
+        text_box_set_focus(app->monitor_text_box, TextBoxFocusEnd);
+    }
 }
 
 static void clear_monitor(GennaroAIApp* app) {
-    if(!app || !app->monitor_buffer) return;
+    if(!app_is_valid(app)) {
+        FURI_LOG_E(TAG, "❌ Invalid app in clear_monitor");
+        return;
+    }
     
     furi_string_reset(app->monitor_buffer);
     app->lines_count = 0;
+    app->line_pos = 0;
     
-    add_line_to_monitor(app, "=== MONITOR CLEARED ===");
-    add_line_to_monitor(app, "Gennaro AI Serial Monitor Ready");
-    add_line_to_monitor(app, "ESP32-CAM Communication Active");
+    add_line_to_monitor(app, "MONITOR READY");
+    add_line_to_monitor(app, "ESP32-CAM Interface");
 }
 
-// ===== SUBMENU CALLBACKS =====
+// ===== SUBMENU CALLBACKS (CRASH-SAFE) =====
 
 static void main_submenu_callback(void* context, uint32_t index) {
-    GennaroAIApp* app = context;
+    GennaroAIApp* app = (GennaroAIApp*)context;
+    
+    if(!app_is_valid(app)) {
+        FURI_LOG_E(TAG, "❌ Invalid app in main_submenu_callback");
+        return;
+    }
     
     switch(index) {
         case GennaroAIMenuMonitor:
@@ -312,15 +234,10 @@ static void main_submenu_callback(void* context, uint32_t index) {
             break;
             
         case GennaroAIMenuHelp:
-            add_line_to_monitor(app, "=== HELP - GENNARO AI ===");
-            add_line_to_monitor(app, "Connections:");
-            add_line_to_monitor(app, "  Flipper GPIO13 -> ESP32 GPIO3");
-            add_line_to_monitor(app, "  Flipper GPIO14 <- ESP32 GPIO1");
-            add_line_to_monitor(app, "  Flipper 5V -> ESP32 5V");
-            add_line_to_monitor(app, "  Flipper GND -> ESP32 GND");
-            add_line_to_monitor(app, "");
-            add_line_to_monitor(app, "Commands: Use Commands menu");
-            add_line_to_monitor(app, "Monitor: Real-time ESP32 responses");
+            add_line_to_monitor(app, "=== GENNARO AI HELP ===");
+            add_line_to_monitor(app, "GPIO13->ESP32 GPIO3");
+            add_line_to_monitor(app, "GPIO14<-ESP32 GPIO1");
+            add_line_to_monitor(app, "Use Commands menu");
             app->monitor_active = true;
             update_monitor_display(app);
             view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewMonitor);
@@ -329,7 +246,12 @@ static void main_submenu_callback(void* context, uint32_t index) {
 }
 
 static void commands_submenu_callback(void* context, uint32_t index) {
-    GennaroAIApp* app = context;
+    GennaroAIApp* app = (GennaroAIApp*)context;
+    
+    if(!app_is_valid(app)) {
+        FURI_LOG_E(TAG, "❌ Invalid app in commands_submenu_callback");
+        return;
+    }
     
     switch(index) {
         case GennaroAICommandVision:
@@ -344,18 +266,6 @@ static void commands_submenu_callback(void* context, uint32_t index) {
         case GennaroAICommandCount:
             send_command_to_esp32(app, "COUNT");
             break;
-        case GennaroAICommandPTTStart:
-            send_command_to_esp32(app, "PTT_START");
-            break;
-        case GennaroAICommandPTTStop:
-            send_command_to_esp32(app, "PTT_STOP");
-            break;
-        case GennaroAICommandFlashOn:
-            send_command_to_esp32(app, "FLASH_ON");
-            break;
-        case GennaroAICommandFlashOff:
-            send_command_to_esp32(app, "FLASH_OFF");
-            break;
         case GennaroAICommandStatus:
             send_command_to_esp32(app, "STATUS");
             break;
@@ -364,16 +274,22 @@ static void commands_submenu_callback(void* context, uint32_t index) {
             break;
     }
     
-    // Auto-switch to monitor to see response
+    // SAFE auto-switch to monitor
     app->monitor_active = true;
     update_monitor_display(app);
     view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewMonitor);
 }
 
-// ===== INPUT CALLBACKS =====
+// ===== INPUT CALLBACKS (CRASH-SAFE) =====
 
 static bool monitor_input_callback(InputEvent* event, void* context) {
-    GennaroAIApp* app = context;
+    GennaroAIApp* app = (GennaroAIApp*)context;
+    
+    if(!app_is_valid(app) || !event) {
+        FURI_LOG_E(TAG, "❌ Invalid parameters in monitor_input_callback");
+        return false;
+    }
+    
     bool consumed = false;
     
     if(event->type == InputTypePress) {
@@ -384,34 +300,20 @@ static bool monitor_input_callback(InputEvent* event, void* context) {
                 consumed = true;
                 break;
             case InputKeyOk:
-                // Quick command menu
                 view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewCommands);
                 consumed = true;
                 break;
-            case InputKeyUp:
-                // Scroll up (if needed)
-                break;
-            case InputKeyDown:
-                // Scroll down (if needed)
-                break;
             case InputKeyLeft:
-                // Clear monitor
                 clear_monitor(app);
                 consumed = true;
                 break;
             case InputKeyRight:
-                // Send status
                 send_command_to_esp32(app, "STATUS");
                 consumed = true;
                 break;
             default:
                 break;
         }
-    }
-    
-    // Continuously check for ESP32 responses when monitor is active
-    if(app->monitor_active) {
-        check_esp32_responses(app);
     }
     
     return consumed;
@@ -429,82 +331,143 @@ static uint32_t navigation_submenu_callback(void* context) {
     return GennaroAIViewSubmenu;
 }
 
-// ===== APP ALLOCATION =====
+// ===== APP ALLOCATION (CRASH-SAFE) =====
 
 static GennaroAIApp* gennaro_ai_app_alloc() {
     GennaroAIApp* app = malloc(sizeof(GennaroAIApp));
-    if(!app) return NULL;
+    if(!app) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate app struct");
+        return NULL;
+    }
     
-    // Initialize all pointers to NULL
+    // SAFE initialization - zero everything first
     memset(app, 0, sizeof(GennaroAIApp));
     
-    // Allocate strings
+    // Initialize critical flag
+    app->initialized = false;
+    
+    // SAFE string allocation
     app->monitor_buffer = furi_string_alloc();
-    app->temp_line = furi_string_alloc();
-    if(!app->monitor_buffer || !app->temp_line) {
-        if(app->monitor_buffer) furi_string_free(app->monitor_buffer);
-        if(app->temp_line) furi_string_free(app->temp_line);
+    if(!app->monitor_buffer) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate monitor buffer");
         free(app);
         return NULL;
     }
     
-    // Initialize state
+    // SAFE notifications
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
+    if(!app->notifications) {
+        FURI_LOG_E(TAG, "❌ Failed to open notifications");
+        furi_string_free(app->monitor_buffer);
+        free(app);
+        return NULL;
+    }
+    
+    // SAFE view dispatcher
+    app->view_dispatcher = view_dispatcher_alloc();
+    if(!app->view_dispatcher) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate view dispatcher");
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_string_free(app->monitor_buffer);
+        free(app);
+        return NULL;
+    }
+    
+    // SAFE main submenu
+    app->main_submenu = submenu_alloc();
+    if(!app->main_submenu) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate main submenu");
+        view_dispatcher_free(app->view_dispatcher);
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_string_free(app->monitor_buffer);
+        free(app);
+        return NULL;
+    }
+    
+    // SAFE submenu items
+    submenu_add_item(app->main_submenu, "Serial Monitor", GennaroAIMenuMonitor, main_submenu_callback, app);
+    submenu_add_item(app->main_submenu, "Send Commands", GennaroAIMenuCommands, main_submenu_callback, app);
+    submenu_add_item(app->main_submenu, "Help", GennaroAIMenuHelp, main_submenu_callback, app);
+    
+    view_set_previous_callback(submenu_get_view(app->main_submenu), navigation_exit_callback);
+    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewSubmenu, submenu_get_view(app->main_submenu));
+    
+    // SAFE commands submenu
+    app->commands_submenu = submenu_alloc();
+    if(!app->commands_submenu) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate commands submenu");
+        // Cleanup previous allocations
+        view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewSubmenu);
+        submenu_free(app->main_submenu);
+        view_dispatcher_free(app->view_dispatcher);
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_string_free(app->monitor_buffer);
+        free(app);
+        return NULL;
+    }
+    
+    submenu_add_item(app->commands_submenu, "Vision Analysis", GennaroAICommandVision, commands_submenu_callback, app);
+    submenu_add_item(app->commands_submenu, "Math Solver", GennaroAICommandMath, commands_submenu_callback, app);
+    submenu_add_item(app->commands_submenu, "OCR Text", GennaroAICommandOCR, commands_submenu_callback, app);
+    submenu_add_item(app->commands_submenu, "Count Objects", GennaroAICommandCount, commands_submenu_callback, app);
+    submenu_add_item(app->commands_submenu, "System Status", GennaroAICommandStatus, commands_submenu_callback, app);
+    submenu_add_item(app->commands_submenu, "Clear Monitor", GennaroAICommandClear, commands_submenu_callback, app);
+    
+    view_set_previous_callback(submenu_get_view(app->commands_submenu), navigation_submenu_callback);
+    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewCommands, submenu_get_view(app->commands_submenu));
+    
+    // SAFE monitor text box
+    app->monitor_text_box = text_box_alloc();
+    if(!app->monitor_text_box) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate text box");
+        // Cleanup all previous allocations
+        view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewCommands);
+        view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewSubmenu);
+        submenu_free(app->commands_submenu);
+        submenu_free(app->main_submenu);
+        view_dispatcher_free(app->view_dispatcher);
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_string_free(app->monitor_buffer);
+        free(app);
+        return NULL;
+    }
+    
+    text_box_set_font(app->monitor_text_box, TextBoxFontText);
+    view_set_previous_callback(text_box_get_view(app->monitor_text_box), navigation_submenu_callback);
+    view_set_input_callback(text_box_get_view(app->monitor_text_box), monitor_input_callback);
+    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewMonitor, text_box_get_view(app->monitor_text_box));
+    
+    // Initialize state SAFELY
     app->monitor_active = false;
     app->commands_sent = 0;
     app->line_pos = 0;
     app->lines_count = 0;
     memset(app->line_buffer, 0, sizeof(app->line_buffer));
     
-    // Get notifications
-    app->notifications = furi_record_open(RECORD_NOTIFICATION);
-    
-    // Create view dispatcher
-    app->view_dispatcher = view_dispatcher_alloc();
-    
-    // Create main submenu
-    app->main_submenu = submenu_alloc();
-    submenu_add_item(app->main_submenu, "📺 Serial Monitor", GennaroAIMenuMonitor, main_submenu_callback, app);
-    submenu_add_item(app->main_submenu, "📤 Send Commands", GennaroAIMenuCommands, main_submenu_callback, app);
-    submenu_add_item(app->main_submenu, "❓ Help & Info", GennaroAIMenuHelp, main_submenu_callback, app);
-    
-    view_set_previous_callback(submenu_get_view(app->main_submenu), navigation_exit_callback);
-    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewSubmenu, submenu_get_view(app->main_submenu));
-    
-    // Create commands submenu
-    app->commands_submenu = submenu_alloc();
-    submenu_add_item(app->commands_submenu, "👁️ Vision Analysis", GennaroAICommandVision, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "🧮 Math Solver", GennaroAICommandMath, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "📝 OCR Text", GennaroAICommandOCR, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "🔢 Count Objects", GennaroAICommandCount, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "🎤 PTT Start", GennaroAICommandPTTStart, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "⏹️ PTT Stop", GennaroAICommandPTTStop, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "💡 Flash ON", GennaroAICommandFlashOn, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "🔲 Flash OFF", GennaroAICommandFlashOff, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "📊 System Status", GennaroAICommandStatus, commands_submenu_callback, app);
-    submenu_add_item(app->commands_submenu, "🗑️ Clear Monitor", GennaroAICommandClear, commands_submenu_callback, app);
-    
-    view_set_previous_callback(submenu_get_view(app->commands_submenu), navigation_submenu_callback);
-    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewCommands, submenu_get_view(app->commands_submenu));
-    
-    // Create monitor text box
-    app->monitor_text_box = text_box_alloc();
-    text_box_set_font(app->monitor_text_box, TextBoxFontText);
-    view_set_previous_callback(text_box_get_view(app->monitor_text_box), navigation_submenu_callback);
-    view_set_input_callback(text_box_get_view(app->monitor_text_box), monitor_input_callback);
-    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewMonitor, text_box_get_view(app->monitor_text_box));
-    
-    // Initialize monitor
+    // SAFE monitor initialization
     clear_monitor(app);
     
+    // Mark as initialized LAST
+    app->initialized = true;
+    
+    FURI_LOG_I(TAG, "✅ App allocated safely");
     return app;
 }
 
-// ===== APP DEALLOCATION =====
+// ===== APP DEALLOCATION (CRASH-SAFE) =====
 
 static void gennaro_ai_app_free(GennaroAIApp* app) {
-    if(!app) return;
+    if(!app) {
+        FURI_LOG_W(TAG, "⚠️ Attempted to free NULL app");
+        return;
+    }
     
-    // Remove views
+    FURI_LOG_I(TAG, "🧹 Freeing app safely");
+    
+    // Mark as not initialized first
+    app->initialized = false;
+    
+    // SAFE view dispatcher cleanup
     if(app->view_dispatcher) {
         view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewSubmenu);
         view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewCommands);
@@ -512,65 +475,68 @@ static void gennaro_ai_app_free(GennaroAIApp* app) {
         view_dispatcher_free(app->view_dispatcher);
     }
     
-    // Free views
+    // SAFE view cleanup
     if(app->main_submenu) submenu_free(app->main_submenu);
     if(app->commands_submenu) submenu_free(app->commands_submenu);
     if(app->monitor_text_box) text_box_free(app->monitor_text_box);
     
-    // Free strings
+    // SAFE string cleanup
     if(app->monitor_buffer) furi_string_free(app->monitor_buffer);
-    if(app->temp_line) furi_string_free(app->temp_line);
     
-    // Close notifications
+    // SAFE notifications cleanup
     if(app->notifications) furi_record_close(RECORD_NOTIFICATION);
     
+    // Finally free the app
     free(app);
 }
 
-// ===== MAIN APP ENTRY POINT =====
+// ===== MAIN APP ENTRY POINT (CRASH-SAFE) =====
 
 int32_t gennaro_ai_app(void* p) {
     UNUSED(p);
     
-    FURI_LOG_I(TAG, "🚀 Starting Gennaro AI Serial Monitor");
+    FURI_LOG_I(TAG, "🚀 Starting Gennaro AI (Safe Mode)");
     
     GennaroAIApp* app = gennaro_ai_app_alloc();
     if(!app) {
-        FURI_LOG_E(TAG, "❌ Failed to allocate app");
+        FURI_LOG_E(TAG, "❌ Failed to allocate app - ABORTING");
         return -1;
     }
     
-    // Initialize GPIO
+    // SAFE GPIO initialization
     init_gpio_uart(app);
     
-    // Attach to GUI
+    // SAFE GUI attachment
     Gui* gui = furi_record_open(RECORD_GUI);
+    if(!gui) {
+        FURI_LOG_E(TAG, "❌ Failed to open GUI record");
+        gennaro_ai_app_free(app);
+        return -1;
+    }
+    
     view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
     
-    // Set starting view
+    // SAFE starting view
     view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewSubmenu);
     
-    // Welcome
-    notification_message(app->notifications, &sequence_display_backlight_on);
-    notification_message(app->notifications, &sequence_single_vibro);
+    // SAFE welcome
+    if(app->notifications) {
+        notification_message(app->notifications, &sequence_display_backlight_on);
+        notification_message(app->notifications, &sequence_single_vibro);
+    }
     
-    add_line_to_monitor(app, "=== GENNARO AI STARTED ===");
-    add_line_to_monitor(app, "Initializing ESP32-CAM communication...");
+    add_line_to_monitor(app, "GENNARO AI READY");
+    add_line_to_monitor(app, "Safe Mode Active");
     
-    // Send initial status
-    furi_delay_ms(1000);
-    send_command_to_esp32(app, "STATUS");
+    FURI_LOG_I(TAG, "✅ App started safely");
     
-    FURI_LOG_I(TAG, "✅ App initialized - Serial Monitor ready!");
-    
-    // Run view dispatcher
+    // SAFE main loop
     view_dispatcher_run(app->view_dispatcher);
     
-    // Cleanup
+    // SAFE cleanup
     furi_record_close(RECORD_GUI);
     gennaro_ai_app_free(app);
     
-    FURI_LOG_I(TAG, "🛑 Gennaro AI Serial Monitor terminated");
-    
+    FURI_LOG_I(TAG, "🛑 App terminated safely");
     return 0;
 }

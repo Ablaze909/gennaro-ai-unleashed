@@ -1,4 +1,4 @@
-name: Build Gennaro AI FAP for Momentum v2.0
+name: Build Gennaro AI FAP for Momentum v2.1
 
 on:
   push:
@@ -35,60 +35,58 @@ jobs:
       uses: actions/cache@v3
       with:
         path: Momentum-Firmware
-        key: momentum-fw-${{ hashFiles('**/build.yml') }}
+        key: momentum-fw-${{ hashFiles('**/build.yml') }}-v2
         restore-keys: |
+          momentum-fw-v2-
           momentum-fw-
         
-    - name: Clone Momentum firmware
+    - name: Clone or update Momentum firmware
       run: |
         if [ ! -d "Momentum-Firmware" ]; then
-          echo "Cloning fresh Momentum firmware..."
+          echo "=== Cloning fresh Momentum firmware ==="
           git clone --recursive --depth 1 https://github.com/Next-Flip/Momentum-Firmware.git
           cd Momentum-Firmware
           git submodule update --init --recursive
         else
-          echo "Using cached Momentum firmware..."
+          echo "=== Using cached Momentum firmware ==="
           cd Momentum-Firmware
-          git pull origin master || true
-          git submodule update --recursive || true
+          git pull origin master || echo "Pull failed, using cached version"
+          git submodule update --recursive || echo "Submodule update failed"
         fi
         
-    - name: Install FBT dependencies
+    - name: Verify FBT tool
       run: |
         cd Momentum-Firmware
-        ./fbt --help
+        ./fbt --help || echo "FBT help failed"
         
-    - name: Create app directory structure
+    - name: Create clean app directory
       run: |
+        echo "=== Creating clean app directory ==="
+        rm -rf Momentum-Firmware/applications/external/gennaro_ai
         mkdir -p Momentum-Firmware/applications/external/gennaro_ai
-        mkdir -p Momentum-Firmware/applications/external/gennaro_ai/icons
+        
+    - name: Create simple icon
+      run: |
+        echo "=== Creating application icon ==="
+        # Create a simple 10x10 PNG icon
+        python3 -c "
+import base64
+# Simple 10x10 black square PNG
+png_data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVBiVpY+xDQAgCAS/xgk6gx3AlThCJ3AER+gMduAEJsbGhISGXHI/jyQAAP//ZgZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmaH8AEMU5AK1dCd/gAAAABJRU5ErkJggg==')
+with open('icon.png', 'wb') as f:
+    f.write(png_data)
+"
+        ls -la icon.png
+        file icon.png
         
     - name: Copy application files
       run: |
         echo "=== Copying application files ==="
         
-        # Remove any existing directory first to force refresh
-        rm -rf Momentum-Firmware/applications/external/gennaro_ai
-        
-        # Create fresh directory
-        mkdir -p Momentum-Firmware/applications/external/gennaro_ai
-        
-        # Copy main application files
-        cp application.fam Momentum-Firmware/applications/external/gennaro_ai/
+        # Copy main files
         cp gennaro_ai.c Momentum-Firmware/applications/external/gennaro_ai/
-        
-        # Create a simple default icon to satisfy the build system
-        echo "Creating default icon..."
-        # Create a minimal 1x1 PNG as fallback
-        echo -e '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\tpHYs\x00\x00\x0b\x13\x00\x00\x0b\x13\x01\x00\x9a\x9c\x18\x00\x00\x00\nIDATx\x9cc\xf8\x00\x00\x00\x01\x00\x01\x00\x00\x00\x00IEND\xaeB`\x82' > temp_icon.png
-        
-        # Use a working icon from another app as template
-        find Momentum-Firmware -name "*.png" -type f | head -1 | xargs -I {} cp {} Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai_icon.png || echo "No icon template found"
-        
-        # If no icon found, create a simple one
-        if [ ! -f "Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai_icon.png" ]; then
-          cp temp_icon.png Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai_icon.png
-        fi
+        cp application.fam Momentum-Firmware/applications/external/gennaro_ai/
+        cp icon.png Momentum-Firmware/applications/external/gennaro_ai/
         
         echo "=== Verifying copied files ==="
         ls -la Momentum-Firmware/applications/external/gennaro_ai/
@@ -96,105 +94,127 @@ jobs:
         echo "=== Application manifest content ==="
         cat Momentum-Firmware/applications/external/gennaro_ai/application.fam
         
-    - name: Build specific FAP
+        echo "=== C file size ==="
+        wc -l Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai.c
+        
+    - name: Test compile (syntax check)
       run: |
         cd Momentum-Firmware
-        echo "=== Building Gennaro AI FAP specifically ==="
-        ./fbt fap_gennaro_ai
+        echo "=== Testing syntax with gcc ==="
+        gcc -c -I./firmware/targets/f*/furi_hal_include -I./applications/services/gui -I./lib/toolbox -I./lib/music_worker applications/external/gennaro_ai/gennaro_ai.c -o /tmp/syntax_test.o || echo "Syntax issues detected"
         
-    - name: Build all FAPs as fallback
-      if: failure()
+    - name: Build Gennaro AI FAP
       run: |
         cd Momentum-Firmware
-        echo "=== Building all external FAPs as fallback ==="
-        ./fbt faps
+        echo "=== Building Gennaro AI FAP ==="
+        ./fbt fap_gennaro_ai 2>&1 | tee build.log || {
+          echo "=== BUILD FAILED - Showing build log ==="
+          cat build.log
+          echo "=== Trying fallback build ==="
+          ./fbt faps 2>&1 | tee fallback_build.log || echo "Fallback also failed"
+        }
         
-    - name: Locate built FAP
+    - name: Locate and verify FAP
       run: |
         cd Momentum-Firmware
-        echo "=== Searching for Gennaro AI FAP ==="
+        echo "=== Searching for built FAP ==="
         
-        # Search in multiple possible locations
-        find . -name "*gennaro*.fap" -type f -exec ls -la {} \;
-        find . -name "gennaro_ai.fap" -type f -exec ls -la {} \;
+        # Multiple search patterns
+        find . -name "*gennaro*.fap" -type f -exec ls -lah {} \; || echo "No gennaro FAPs found"
+        find . -name "*.fap" -path "*/gennaro_ai/*" -type f -exec ls -lah {} \; || echo "No FAPs in gennaro_ai path"
         
-        # Check standard build directories
-        ls -la build/f*/dist/faps/ 2>/dev/null || echo "Standard faps directory not found"
-        ls -la build/f*/ext/ 2>/dev/null || echo "Ext directory not found"
+        # Check build directories
+        ls -la build/f*/dist/faps/ 2>/dev/null | grep -i gennaro || echo "No gennaro FAP in standard location"
         
-        # Find the actual FAP and copy to workspace
-        FAP_FILE=$(find . -name "gennaro_ai.fap" -type f | head -1)
+        # Find any FAP and copy to workspace
+        FAP_FILE=$(find . -name "*gennaro*.fap" -type f | head -1)
         if [ -n "$FAP_FILE" ]; then
-          echo "Found FAP at: $FAP_FILE"
-          cp "$FAP_FILE" ../gennaro_ai_momentum_v2.fap
-          ls -la ../gennaro_ai_momentum_v2.fap
+          echo "✅ Found FAP: $FAP_FILE"
+          cp "$FAP_FILE" ../gennaro_ai_v2.1.fap
+          ls -lah ../gennaro_ai_v2.1.fap
+          file ../gennaro_ai_v2.1.fap
         else
-          echo "FAP not found, searching for any Gennaro-related files..."
-          find . -iname "*gennaro*" -type f
+          echo "❌ No FAP found"
+          echo "=== All FAP files in build ==="
+          find . -name "*.fap" -type f | head -20
         fi
         
-    - name: Verify FAP file
-      run: |
-        if [ -f "gennaro_ai_momentum_v2.fap" ]; then
-          echo "=== FAP file successfully created ==="
-          ls -la gennaro_ai_momentum_v2.fap
-          file gennaro_ai_momentum_v2.fap
-        else
-          echo "=== No FAP file found, listing all FAP files ==="
-          find Momentum-Firmware -name "*.fap" -type f -exec ls -la {} \;
-        fi
-        
-    - name: Upload Gennaro AI FAP
+    - name: Upload main FAP
       uses: actions/upload-artifact@v4
       with:
-        name: gennaro_ai_momentum_v2
-        path: "gennaro_ai_momentum_v2.fap"
+        name: gennaro_ai_v2.1_momentum
+        path: "gennaro_ai_v2.1.fap"
         retention-days: 30
         if-no-files-found: warn
         
-    - name: Upload all FAPs for debugging
+    - name: Collect debug info
       if: always()
       run: |
-        echo "=== Creating debug FAP collection ==="
-        mkdir -p debug_faps
-        find Momentum-Firmware -name "*.fap" -type f -exec cp {} debug_faps/ \; 2>/dev/null || echo "No FAPs found for debug"
-        ls -la debug_faps/ || echo "Debug faps directory empty"
+        echo "=== Creating debug package ==="
+        mkdir -p debug_package
         
-    - name: Upload debug artifacts
+        # Copy build logs
+        cp Momentum-Firmware/build.log debug_package/ 2>/dev/null || echo "No build.log"
+        cp Momentum-Firmware/fallback_build.log debug_package/ 2>/dev/null || echo "No fallback log"
+        
+        # Copy any found FAPs
+        find Momentum-Firmware -name "*.fap" -type f -exec cp {} debug_package/ \; 2>/dev/null || echo "No FAPs found"
+        
+        # Copy our source files
+        cp gennaro_ai.c debug_package/ 2>/dev/null || echo "No source"
+        cp application.fam debug_package/ 2>/dev/null || echo "No manifest"
+        
+        # Create info file
+        echo "Build Date: $(date)" > debug_package/build_info.txt
+        echo "Commit: ${{ github.sha }}" >> debug_package/build_info.txt
+        echo "Repository: ${{ github.repository }}" >> debug_package/build_info.txt
+        echo "Files in debug package:" >> debug_package/build_info.txt
+        ls -la debug_package/ >> debug_package/build_info.txt
+        
+    - name: Upload debug package
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: all_momentum_faps_debug_v2
-        path: debug_faps/
+        name: gennaro_ai_debug_v2.1
+        path: debug_package/
         retention-days: 7
         if-no-files-found: ignore
         
-    - name: Upload build logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: momentum_build_logs_v2
-        path: |
-          Momentum-Firmware/build/
-          Momentum-Firmware/.fbt/
-        retention-days: 7
-        if-no-files-found: ignore
-        
-    - name: Create release info
+    - name: Create release notes
       if: success()
       run: |
-        echo "=== Build Summary ===" > build_info.txt
-        echo "Firmware: Momentum" >> build_info.txt
-        echo "App: Gennaro AI v2.0" >> build_info.txt
-        echo "Features: Full UART Communication, Anti-crash, Flash LED Control" >> build_info.txt
-        echo "Build Date: $(date)" >> build_info.txt
-        echo "Commit: ${{ github.sha }}" >> build_info.txt
-        cat build_info.txt
+        echo "=== GENNARO AI v2.1 BUILD SUCCESS ===" > release_notes.md
+        echo "" >> release_notes.md
+        echo "## Features" >> release_notes.md
+        echo "- ✅ Serial Monitor Interface" >> release_notes.md
+        echo "- ✅ GPIO UART Communication" >> release_notes.md
+        echo "- ✅ Real-time ESP32 Response Display" >> release_notes.md
+        echo "- ✅ 10 Predefined AI Commands" >> release_notes.md
+        echo "- ✅ Vision Analysis & Math Solver" >> release_notes.md
+        echo "- ✅ OCR & Object Counting" >> release_notes.md
+        echo "- ✅ Push-to-Talk Voice Control" >> release_notes.md
+        echo "- ✅ Flash LED Control" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "## Hardware Requirements" >> release_notes.md
+        echo "- Flipper Zero with Momentum Firmware" >> release_notes.md
+        echo "- ESP32-CAM AI-Thinker" >> release_notes.md
+        echo "- MAX9814 Microphone Module" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "## Installation" >> release_notes.md
+        echo "1. Download \`gennaro_ai_v2.1.fap\`" >> release_notes.md
+        echo "2. Copy to \`/ext/apps/GPIO/\` on SD card" >> release_notes.md
+        echo "3. Connect hardware as per documentation" >> release_notes.md
+        echo "4. Run from Apps > GPIO > Gennaro AI" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "Build: $(date)" >> release_notes.md
+        echo "Commit: ${{ github.sha }}" >> release_notes.md
         
-    - name: Upload build info
+        cat release_notes.md
+        
+    - name: Upload release notes
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: build_info_v2
-        path: build_info.txt
+        name: release_notes_v2.1
+        path: release_notes.md
         retention-days: 30

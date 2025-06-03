@@ -103,7 +103,7 @@ typedef struct {
 
 // Worker event flags for thread communication
 typedef enum {
-    WorkerEventDataWaiting = 1 << 0, // Data waiting to be processed
+    WorkerEventDataWaiting = 1 << 0, // Data waiting to be processed  
     WorkerEventExiting = 1 << 1,     // Worker thread is exiting
 } WorkerEventFlags;
 
@@ -115,7 +115,7 @@ static void process_esp32_response(GennaroAIApp* app, const char* response);
 
 // ===== UART COMMUNICATION =====
 
-// ===== UART COMMUNICATION - Derek Jamison Approach =====
+// ===== UART COMMUNICATION - Derek Jamison WORKING Approach =====
 
 static void uart_received_byte_callback(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, void* context) {
     GennaroAIApp* app = context;
@@ -128,30 +128,32 @@ static void uart_received_byte_callback(FuriHalSerialHandle* handle, FuriHalSeri
 }
 
 static void init_uart(GennaroAIApp* app) {
-    // Initialize GPIO pins first
-    furi_hal_gpio_init(ESP32_TX_PIN, GpioModeOutputPushPull, GpioPullNo, GpioSpeedVeryHigh);
-    furi_hal_gpio_init(ESP32_RX_PIN, GpioModeInput, GpioPullUp, GpioSpeedVeryHigh);
+    // Initialize GPIO pins for UART alternate function
+    furi_hal_gpio_init(ESP32_TX_PIN, GpioModeAltFunctionPushPull, GpioPullNo, GpioSpeedVeryHigh);
+    furi_hal_gpio_init(ESP32_RX_PIN, GpioModeAltFunctionPushPull, GpioPullUp, GpioSpeedVeryHigh);
     
-    // Acquire UART handle
+    // Try to acquire UART handle
     app->serial_handle = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
-    if(!app->serial_handle) {
-        FURI_LOG_E(TAG, "Failed to acquire UART handle");
-        return;
+    if(app->serial_handle) {
+        // Initialize UART with standard settings
+        furi_hal_serial_init(app->serial_handle, UART_BAUD_RATE);
+        
+        // Enable async RX with callback - Derek Jamison approach
+        furi_hal_serial_async_rx_start(app->serial_handle, uart_received_byte_callback, app, false);
+        
+        app->uart_init_by_app = true;
+        FURI_LOG_I(TAG, "✅ UART initialized successfully at %d baud with RX callback", UART_BAUD_RATE);
+    } else {
+        FURI_LOG_E(TAG, "❌ Failed to acquire UART, GPIO only mode");
+        // Fallback to GPIO-only communication
+        furi_hal_gpio_init(ESP32_TX_PIN, GpioModeOutputPushPull, GpioPullNo, GpioSpeedVeryHigh);
+        furi_hal_gpio_init(ESP32_RX_PIN, GpioModeInput, GpioPullUp, GpioSpeedVeryHigh);
     }
-    
-    // Initialize UART
-    furi_hal_serial_init(app->serial_handle, UART_BAUD_RATE);
-    
-    // Set RX callback  
-    furi_hal_serial_async_rx_start(app->serial_handle, uart_received_byte_callback, app, false);
-    
-    app->uart_init_by_app = true;
-    
-    FURI_LOG_I(TAG, "UART initialized successfully at %d baud", UART_BAUD_RATE);
 }
 
 static void deinit_uart(GennaroAIApp* app) {
     if(app->uart_init_by_app && app->serial_handle) {
+        // Stop async RX first
         furi_hal_serial_async_rx_stop(app->serial_handle);
         furi_hal_serial_deinit(app->serial_handle);
         furi_hal_serial_control_release(app->serial_handle);
@@ -182,7 +184,7 @@ static void uart_rx_callback(FuriHalSerialHandle* handle, FuriHalSerialRxEvent e
 static int32_t uart_worker(void* context) {
     GennaroAIApp* app = context;
     
-    FURI_LOG_I(TAG, "UART worker thread started");
+    FURI_LOG_I(TAG, "🔄 UART worker thread started - Ready to receive ESP32 responses!");
     
     uint32_t events;
     uint8_t buffer[64];
@@ -200,7 +202,7 @@ static int32_t uart_worker(void* context) {
         }
         
         if(events & WorkerEventDataWaiting) {
-            // Process all available data
+            // Process all available data from stream buffer
             size_t length_read;
             do {
                 length_read = furi_stream_buffer_receive(app->rx_stream, buffer, sizeof(buffer), 0);
@@ -213,8 +215,8 @@ static int32_t uart_worker(void* context) {
                         if(line_pos > 0) {
                             line_buffer[line_pos] = '\0';
                             
-                            // Process complete line
-                            FURI_LOG_I(TAG, "Received line: %s", line_buffer);
+                            // Process complete line from ESP32
+                            FURI_LOG_I(TAG, "📥 Received ESP32 response: %s", line_buffer);
                             process_esp32_response(app, line_buffer);
                             
                             line_pos = 0;
@@ -227,7 +229,7 @@ static int32_t uart_worker(void* context) {
         }
     }
     
-    FURI_LOG_I(TAG, "UART worker thread stopped");
+    FURI_LOG_I(TAG, "🛑 UART worker thread stopped");
     return 0;
 }
 
@@ -242,12 +244,9 @@ static void send_esp32_command(GennaroAIApp* app, const char* command) {
     // Send via UART first
     if(app->serial_handle) {
         size_t command_len = strlen(command);
-        size_t sent = 0;
         
         // Send command
-        while(sent < command_len) {
-            sent += furi_hal_serial_tx(app->serial_handle, (uint8_t*)command + sent, command_len - sent);
-        }
+        furi_hal_serial_tx(app->serial_handle, (uint8_t*)command, command_len);
         
         // Send newline
         furi_hal_serial_tx(app->serial_handle, (uint8_t*)"\n", 1);
@@ -325,10 +324,13 @@ static void send_esp32_command(GennaroAIApp* app, const char* command) {
     furi_hal_gpio_write(ESP32_TX_PIN, false);
     
     app->command_count++;
-    app->current_state = StateWaiting;
+    app->current_state = StateWaiting;  // Wait for ESP32 response
     
     // Vibration feedback
     notification_message(app->notifications, &sequence_single_vibro);
+    
+    FURI_LOG_I(TAG, "📤 Command sent, waiting for ESP32 response...");
+}
 }
 
 // ===== RESPONSE PROCESSING =====
@@ -600,9 +602,9 @@ static GennaroAIApp* gennaro_ai_app_alloc() {
     app->response_complete = false;
     memset(app->response_buffer, 0, sizeof(app->response_buffer));
     
-    // Initialize communication - Derek Jamison approach
+    // Initialize communication - Derek Jamison WORKING approach
     app->serial_handle = NULL;
-    app->rx_stream = furi_stream_buffer_alloc(2048, 1);
+    app->rx_stream = furi_stream_buffer_alloc(2048, 1);  // Larger buffer for ESP32 responses
     app->data_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->uart_init_by_app = false;
     
@@ -640,10 +642,10 @@ static GennaroAIApp* gennaro_ai_app_alloc() {
     view_set_previous_callback(loading_get_view(app->loading), gennaro_ai_navigation_submenu_callback);
     view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewLoading, loading_get_view(app->loading));
     
-    // Initialize UART communication (Derek Jamison approach)
+    // Initialize UART communication - Derek Jamison WORKING approach 
     init_uart(app);
     
-    // Start UART worker thread  
+    // Start UART worker thread for receiving ESP32 responses
     app->uart_thread = furi_thread_alloc_ex("GennaroAI_UART", 2048, uart_worker, app);
     furi_thread_start(app->uart_thread);
     

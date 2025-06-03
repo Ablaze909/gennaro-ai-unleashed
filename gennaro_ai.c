@@ -40,7 +40,7 @@ typedef enum {
     GennaroAIMenuHelp,
 } GennaroAIMenuItem;
 
-// App context - FIXED allocazione memoria
+// App context - FIXED allocazione memoria + UART reading
 typedef struct {
     ViewDispatcher* view_dispatcher;
     Submenu* submenu;
@@ -60,7 +60,82 @@ typedef struct {
     // AGGIUNTO: Flash state
     bool flash_enabled;
     
+    // AGGIUNTO: UART reading
+    FuriThread* uart_thread;
+    bool uart_thread_running;
+    
 } GennaroAIApp;
+
+// AGGIUNTO: Thread per leggere risposte ESP32-CAM
+static int32_t uart_worker(void* context) {
+    GennaroAIApp* app = context;
+    
+    // Inizializza UART
+    furi_hal_uart_init(FuriHalUartIdUSART1, 115200);
+    
+    uint8_t data[256];
+    size_t received = 0;
+    FuriString* uart_buffer = furi_string_alloc();
+    
+    while(app->uart_thread_running) {
+        // Leggi dati disponibili
+        received = furi_hal_uart_rx(FuriHalUartIdUSART1, data, sizeof(data) - 1, 100);
+        
+        if(received > 0) {
+            data[received] = '\0';
+            furi_string_cat_str(uart_buffer, (char*)data);
+            
+            // Cerca messaggio completo (START:....:END)
+            const char* start_marker = "START:";
+            const char* end_marker = ":END";
+            
+            const char* buffer_cstr = furi_string_get_cstr(uart_buffer);
+            const char* start_pos = strstr(buffer_cstr, start_marker);
+            
+            if(start_pos) {
+                const char* end_pos = strstr(start_pos, end_marker);
+                if(end_pos) {
+                    // Estrai messaggio
+                    size_t msg_start = start_pos - buffer_cstr + strlen(start_marker);
+                    size_t msg_len = end_pos - buffer_cstr - msg_start;
+                    
+                    if(msg_len > 0 && msg_len < 500) {
+                        char message[501];
+                        strncpy(message, buffer_cstr + msg_start, msg_len);
+                        message[msg_len] = '\0';
+                        
+                        // Aggiorna display con risposta ricevuta
+                        furi_string_printf(app->response_text, 
+                            "📡 RISPOSTA ESP32-CAM:\n\n%s\n\n"
+                            "Ricevuto: %s",
+                            message,
+                            furi_get_tick());
+                        
+                        // Aggiorna display se nella view text
+                        if(app->text_box) {
+                            text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
+                        }
+                        
+                        // Vibrazione di conferma
+                        if(app->notifications) {
+                            notification_message(app->notifications, &sequence_single_vibro);
+                        }
+                    }
+                    
+                    // Reset buffer
+                    furi_string_reset(uart_buffer);
+                }
+            }
+        }
+        
+        furi_delay_ms(50);
+    }
+    
+    furi_string_free(uart_buffer);
+    furi_hal_uart_deinit(FuriHalUartIdUSART1);
+    
+    return 0;
+}
 
 // FIXED: Send command to ESP32-CAM via GPIO - Gestione errori migliorata
 static bool send_esp32_command(GennaroAIApp* app, const char* command) {
@@ -201,17 +276,17 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
         case GennaroAIMenuVision:
             furi_string_printf(app->response_text, 
                 "👁️ ANALISI IMMAGINE\n\n"
-                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
-                "ESP32-CAM sta:\n"
-                "• Scattando foto con camera\n"
+                "📤 Comando inviato a ESP32-CAM...\n\n"
+                "⏳ Attendere risposta AI:\n"
+                "• Scattando foto con flash\n"
                 "• Inviando a Claude AI\n" 
                 "• Analizzando immagine\n\n"
-                "Controlla il monitor seriale ESP32-CAM\n"
-                "per vedere la risposta AI completa.\n\n"
+                "📱 La risposta apparirà qui\n"
+                "automaticamente quando pronta.\n\n"
                 "Pattern GPIO: 5 impulsi\n"
                 "Flash: %s\n"
                 "Comandi inviati: %lu",
-                app->flash_enabled ? "ACCESO" : "SPENTO",
+                app->flash_enabled ? "AUTO" : "AUTO",
                 app->command_count + 1);
             send_esp32_command(app, "VISION");
             break;
@@ -219,17 +294,16 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
         case GennaroAIMenuMath:
             furi_string_printf(app->response_text,
                 "🧮 MATH SOLVER\n\n"
-                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
-                "ESP32-CAM sta:\n"
-                "• Fotografando problemi matematici\n"
+                "📤 Comando inviato a ESP32-CAM...\n\n"
+                "⏳ Attendere risposta AI:\n"
+                "• Fotografando calcoli\n"
                 "• Inviando a Claude AI\n"
-                "• Risolvendo calcoli\n\n"
-                "I risultati appariranno nel\n"
-                "monitor seriale ESP32-CAM.\n\n"
+                "• Risolvendo problemi\n\n"
+                "📱 La soluzione apparirà qui\n"
+                "automaticamente quando pronta.\n\n"
                 "Pattern GPIO: 3 impulsi\n"
-                "Flash: %s\n"
+                "Flash: AUTO\n"
                 "Comandi inviati: %lu",
-                app->flash_enabled ? "ACCESO" : "SPENTO",
                 app->command_count + 1);
             send_esp32_command(app, "MATH");
             break;
@@ -237,17 +311,16 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
         case GennaroAIMenuOCR:
             furi_string_printf(app->response_text,
                 "📝 LETTURA TESTO (OCR)\n\n"
-                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
-                "ESP32-CAM sta:\n"
+                "📤 Comando inviato a ESP32-CAM...\n\n"
+                "⏳ Attendere risposta AI:\n"
                 "• Fotografando testo\n"
-                "• Eseguendo riconoscimento OCR\n"
+                "• Eseguendo OCR\n"
                 "• Estraendo caratteri\n\n"
-                "Il testo letto sarà mostrato nel\n"
-                "monitor seriale ESP32-CAM.\n\n"
+                "📱 Il testo letto apparirà qui\n"
+                "automaticamente quando pronto.\n\n"
                 "Pattern GPIO: 2 impulsi\n"
-                "Flash: %s\n"
+                "Flash: AUTO\n"
                 "Comandi inviati: %lu",
-                app->flash_enabled ? "ACCESO" : "SPENTO",
                 app->command_count + 1);
             send_esp32_command(app, "OCR");
             break;
@@ -255,17 +328,16 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
         case GennaroAIMenuCount:
             furi_string_printf(app->response_text,
                 "🔢 CONTEGGIO OGGETTI\n\n"
-                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
-                "ESP32-CAM sta:\n"
+                "📤 Comando inviato a ESP32-CAM...\n\n"
+                "⏳ Attendere risposta AI:\n"
                 "• Analizzando immagine\n"
                 "• Identificando oggetti\n"
                 "• Contando elementi\n\n"
-                "Il numero di oggetti sarà mostrato\n"
-                "nel monitor seriale ESP32-CAM.\n\n"
+                "📱 Il numero apparirà qui\n"
+                "automaticamente quando pronto.\n\n"
                 "Pattern GPIO: 4 impulsi\n"
-                "Flash: %s\n"
+                "Flash: AUTO\n"
                 "Comandi inviati: %lu",
-                app->flash_enabled ? "ACCESO" : "SPENTO",
                 app->command_count + 1);
             send_esp32_command(app, "COUNT");
             break;
@@ -548,6 +620,16 @@ static GennaroAIApp* gennaro_ai_app_alloc() {
     app->ptt_start_time = 0;
     app->flash_enabled = false;  // AGGIUNTO
     
+    // AGGIUNTO: Avvia thread UART per leggere risposte
+    app->uart_thread_running = true;
+    app->uart_thread = furi_thread_alloc_ex("UARTWorker", 2048, uart_worker, app);
+    if (app->uart_thread) {
+        furi_thread_start(app->uart_thread);
+        FURI_LOG_I(TAG, "UART worker thread started");
+    } else {
+        FURI_LOG_E(TAG, "Failed to start UART worker thread");
+    }
+    
     // Get notifications
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
     if (!app->notifications) {
@@ -620,6 +702,14 @@ static void gennaro_ai_app_free(GennaroAIApp* app) {
     }
     
     FURI_LOG_I(TAG, "Freeing app resources");
+    
+    // AGGIUNTO: Ferma thread UART
+    if (app->uart_thread) {
+        app->uart_thread_running = false;
+        furi_thread_join(app->uart_thread);
+        furi_thread_free(app->uart_thread);
+        FURI_LOG_I(TAG, "UART worker thread stopped");
+    }
     
     // Remove views safely
     if (app->view_dispatcher) {

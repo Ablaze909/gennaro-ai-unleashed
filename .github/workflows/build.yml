@@ -1,8 +1,8 @@
-name: Build Gennaro AI FAP for Momentum
+name: Build Gennaro AI FAP for Momentum v2.0
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, dev ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -10,6 +10,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    
+    strategy:
+      matrix:
+        target: [f7]
     
     steps:
     - name: Checkout repository
@@ -20,65 +24,122 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git wget curl build-essential
+        sudo apt-get install -y git wget curl build-essential python3 python3-pip
         
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         
+    - name: Cache Momentum firmware
+      uses: actions/cache@v3
+      with:
+        path: Momentum-Firmware
+        key: momentum-fw-${{ hashFiles('**/build.yml') }}
+        restore-keys: |
+          momentum-fw-
+        
     - name: Clone Momentum firmware
       run: |
-        git clone --recursive --depth 1 https://github.com/Next-Flip/Momentum-Firmware.git
-        cd Momentum-Firmware
-        git submodule update --init --recursive
+        if [ ! -d "Momentum-Firmware" ]; then
+          echo "Cloning fresh Momentum firmware..."
+          git clone --recursive --depth 1 https://github.com/Next-Flip/Momentum-Firmware.git
+          cd Momentum-Firmware
+          git submodule update --init --recursive
+        else
+          echo "Using cached Momentum firmware..."
+          cd Momentum-Firmware
+          git pull origin master || true
+          git submodule update --recursive || true
+        fi
         
     - name: Install FBT dependencies
       run: |
         cd Momentum-Firmware
-        ./fbt
+        ./fbt --help
         
     - name: Create app directory structure
       run: |
         mkdir -p Momentum-Firmware/applications/external/gennaro_ai
+        mkdir -p Momentum-Firmware/applications/external/gennaro_ai/icons
         
-    - name: Copy and verify application files
+    - name: Copy application files
       run: |
-        echo "=== Repository files ==="
-        ls -la
-        echo "=== Copying application.fam ==="
+        echo "=== Copying application files ==="
+        
+        # Copy main application files
         cp application.fam Momentum-Firmware/applications/external/gennaro_ai/
-        echo "=== Copying gennaro_ai.c ==="
         cp gennaro_ai.c Momentum-Firmware/applications/external/gennaro_ai/
-        echo "=== Target directory contents ==="
+        
+        # Copy icon if exists
+        if [ -f "gennaro_ai_icon.png" ]; then
+          cp gennaro_ai_icon.png Momentum-Firmware/applications/external/gennaro_ai/
+        fi
+        
+        # Copy additional icons if they exist
+        if [ -d "icons" ]; then
+          cp -r icons/* Momentum-Firmware/applications/external/gennaro_ai/icons/
+        fi
+        
+        echo "=== Verifying copied files ==="
         ls -la Momentum-Firmware/applications/external/gennaro_ai/
-        echo "=== application.fam content ==="
+        
+        echo "=== Application manifest content ==="
         cat Momentum-Firmware/applications/external/gennaro_ai/application.fam
         
-    - name: Build FAP with Momentum
+    - name: Build specific FAP
       run: |
         cd Momentum-Firmware
-        echo "=== Building all external FAPs ==="
-        ./fbt faps
-        echo "=== Checking build directory ==="
-        ls -la build/f*/dist/faps/ || echo "Build directory not found"
-        echo "=== Search for our FAP ==="
-        find . -name "*gennaro*.fap" -type f
-        find . -name "gennaro_ai.fap" -type f
+        echo "=== Building Gennaro AI FAP specifically ==="
+        ./fbt fap_gennaro_ai
         
-    - name: Copy FAP file
+    - name: Build all FAPs as fallback
+      if: failure()
       run: |
-        echo "=== Looking for gennaro_ai FAP ==="
-        find Momentum-Firmware -name "gennaro_ai.fap" -type f -exec cp {} ./ \;
-        find Momentum-Firmware -name "*gennaro*.fap" -type f -exec cp {} ./ \;
-        echo "=== FAP files in current directory ==="
-        ls -la *.fap || echo "No FAP files found"
+        cd Momentum-Firmware
+        echo "=== Building all external FAPs as fallback ==="
+        ./fbt faps
         
-    - name: Upload FAP file
+    - name: Locate built FAP
+      run: |
+        cd Momentum-Firmware
+        echo "=== Searching for Gennaro AI FAP ==="
+        
+        # Search in multiple possible locations
+        find . -name "*gennaro*.fap" -type f -exec ls -la {} \;
+        find . -name "gennaro_ai.fap" -type f -exec ls -la {} \;
+        
+        # Check standard build directories
+        ls -la build/f*/dist/faps/ 2>/dev/null || echo "Standard faps directory not found"
+        ls -la build/f*/ext/ 2>/dev/null || echo "Ext directory not found"
+        
+        # Find the actual FAP and copy to workspace
+        FAP_FILE=$(find . -name "gennaro_ai.fap" -type f | head -1)
+        if [ -n "$FAP_FILE" ]; then
+          echo "Found FAP at: $FAP_FILE"
+          cp "$FAP_FILE" ../gennaro_ai_momentum_v2.fap
+          ls -la ../gennaro_ai_momentum_v2.fap
+        else
+          echo "FAP not found, searching for any Gennaro-related files..."
+          find . -iname "*gennaro*" -type f
+        fi
+        
+    - name: Verify FAP file
+      run: |
+        if [ -f "gennaro_ai_momentum_v2.fap" ]; then
+          echo "=== FAP file successfully created ==="
+          ls -la gennaro_ai_momentum_v2.fap
+          file gennaro_ai_momentum_v2.fap
+        else
+          echo "=== No FAP file found, listing all FAP files ==="
+          find Momentum-Firmware -name "*.fap" -type f -exec ls -la {} \;
+        fi
+        
+    - name: Upload Gennaro AI FAP
       uses: actions/upload-artifact@v4
       with:
-        name: gennaro_ai_momentum_fap
-        path: "*.fap"
+        name: gennaro_ai_momentum_v2
+        path: "gennaro_ai_momentum_v2.fap"
         retention-days: 30
         if-no-files-found: warn
         
@@ -87,14 +148,14 @@ jobs:
       run: |
         echo "=== Creating debug FAP collection ==="
         mkdir -p debug_faps
-        find Momentum-Firmware -name "*.fap" -type f -exec cp {} debug_faps/ \; || echo "No FAPs found"
+        find Momentum-Firmware -name "*.fap" -type f -exec cp {} debug_faps/ \; 2>/dev/null || echo "No FAPs found for debug"
         ls -la debug_faps/ || echo "Debug faps directory empty"
         
-    - name: Upload debug FAPs
+    - name: Upload debug artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: all_momentum_faps_debug
+        name: all_momentum_faps_debug_v2
         path: debug_faps/
         retention-days: 7
         if-no-files-found: ignore
@@ -103,9 +164,28 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: momentum_build_logs
+        name: momentum_build_logs_v2
         path: |
           Momentum-Firmware/build/
           Momentum-Firmware/.fbt/
         retention-days: 7
         if-no-files-found: ignore
+        
+    - name: Create release info
+      if: success()
+      run: |
+        echo "=== Build Summary ===" > build_info.txt
+        echo "Firmware: Momentum" >> build_info.txt
+        echo "App: Gennaro AI v2.0" >> build_info.txt
+        echo "Features: Full UART Communication, Anti-crash, Flash LED Control" >> build_info.txt
+        echo "Build Date: $(date)" >> build_info.txt
+        echo "Commit: ${{ github.sha }}" >> build_info.txt
+        cat build_info.txt
+        
+    - name: Upload build info
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build_info_v2
+        path: build_info.txt
+        retention-days: 30

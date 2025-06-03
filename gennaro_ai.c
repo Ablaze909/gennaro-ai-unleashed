@@ -1,14 +1,15 @@
 /*
- * GENNARO AI - MOMENTUM FIRMWARE COMPATIBLE
- * AI Vision Assistant con ESP32-CAM - VERSIONE ROBUSTA
+ * GENNARO AI - MOMENTUM FIRMWARE COMPATIBLE v2.0
+ * AI Vision Assistant con ESP32-CAM - UART REAL RESPONSES
  * 
  * Features:
- * - Invio comandi via GPIO13 (pattern impulsi)
- * - Ricezione risposte via GPIO14 (UART)
+ * - Invio comandi via GPIO13 + UART TX
+ * - Ricezione risposte REALI via GPIO14 + UART RX  
+ * - Display risposte AI sul Flipper in tempo reale
  * - Gestione PTT Push-to-Talk
  * - Controllo Flash LED
  * - UI robusta anti-crash
- * - Parsing completo risposte AI
+ * - Derek Jamison UART approach (testato e funzionante)
  */
 
 #include <furi.h>
@@ -67,6 +68,12 @@ typedef enum {
     StateError
 } AppState;
 
+// Worker event flags for thread communication
+typedef enum {
+    WorkerEventDataWaiting = 1 << 0, // Data waiting to be processed  
+    WorkerEventExiting = 1 << 1,     // Worker thread is exiting
+} WorkerEventFlags;
+
 // App context
 typedef struct {
     ViewDispatcher* view_dispatcher;
@@ -78,7 +85,7 @@ typedef struct {
     FuriString* response_text;
     FuriString* temp_buffer;
     
-    // Communication - Derek Jamison UART approach
+    // Communication - Derek Jamison WORKING approach
     FuriHalSerialHandle* serial_handle;
     FuriStreamBuffer* rx_stream;
     FuriThread* uart_thread;
@@ -101,19 +108,11 @@ typedef struct {
     
 } GennaroAIApp;
 
-// Worker event flags for thread communication
-typedef enum {
-    WorkerEventDataWaiting = 1 << 0, // Data waiting to be processed  
-    WorkerEventExiting = 1 << 1,     // Worker thread is exiting
-} WorkerEventFlags;
-
 // Forward declarations
 static void uart_received_byte_callback(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, void* context);
 static int32_t uart_worker(void* context);
 static void send_esp32_command(GennaroAIApp* app, const char* command);
 static void process_esp32_response(GennaroAIApp* app, const char* response);
-
-// ===== UART COMMUNICATION =====
 
 // ===== UART COMMUNICATION - Derek Jamison WORKING Approach =====
 
@@ -164,21 +163,6 @@ static void deinit_uart(GennaroAIApp* app) {
     // Reset GPIO to analog mode
     furi_hal_gpio_init(ESP32_TX_PIN, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
     furi_hal_gpio_init(ESP32_RX_PIN, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
-}
-
-static void uart_rx_callback(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, void* context) {
-    UNUSED(handle);
-    GennaroAIApp* app = context;
-    
-    if(event == FuriHalSerialRxEventData) {
-        uint8_t data[32];
-        size_t received = furi_hal_serial_rx(app->serial_handle, data, sizeof(data));
-        
-        if(received > 0) {
-            // Send data to stream buffer for processing
-            furi_stream_buffer_send(app->rx_stream, data, received, 0);
-        }
-    }
 }
 
 static int32_t uart_worker(void* context) {
@@ -236,7 +220,7 @@ static int32_t uart_worker(void* context) {
 // ===== ESP32 COMMAND SENDING =====
 
 static void send_esp32_command(GennaroAIApp* app, const char* command) {
-    FURI_LOG_I(TAG, "Sending command: %s", command);
+    FURI_LOG_I(TAG, "📤 Sending command: %s", command);
     
     app->current_state = StateSending;
     app->last_command_time = furi_get_tick();
@@ -251,7 +235,7 @@ static void send_esp32_command(GennaroAIApp* app, const char* command) {
         // Send newline
         furi_hal_serial_tx(app->serial_handle, (uint8_t*)"\n", 1);
         
-        FURI_LOG_I(TAG, "Command sent via UART: %s", command);
+        FURI_LOG_I(TAG, "📤 Command sent via UART: %s", command);
     }
     
     // Also send GPIO pattern for backward compatibility
@@ -331,77 +315,78 @@ static void send_esp32_command(GennaroAIApp* app, const char* command) {
     
     FURI_LOG_I(TAG, "📤 Command sent, waiting for ESP32 response...");
 }
-}
 
 // ===== RESPONSE PROCESSING =====
 
 static void process_esp32_response(GennaroAIApp* app, const char* response) {
     if(!response || strlen(response) == 0) return;
     
-    FURI_LOG_I(TAG, "Received response: %s", response);
+    FURI_LOG_I(TAG, "📥 Processing ESP32 response: %s", response);
     
     furi_mutex_acquire(app->data_mutex, FuriWaitForever);
     
     // Parse response type and content
     if(strncmp(response, "VISION:", 7) == 0) {
         furi_string_printf(app->response_text, 
-            "👁️ ANALISI IMMAGINE\n\n%s\n\nComando completato!", 
+            "👁️ ANALISI IMMAGINE\n\n%s\n\n✅ Risposta AI ricevuta sul Flipper!", 
             response + 7);
     } else if(strncmp(response, "MATH:", 5) == 0) {
         furi_string_printf(app->response_text, 
-            "🧮 MATH SOLVER\n\n%s\n\nCalcolo completato!", 
+            "🧮 MATH SOLVER\n\n%s\n\n✅ Calcolo completato!", 
             response + 5);
     } else if(strncmp(response, "OCR:", 4) == 0) {
         furi_string_printf(app->response_text, 
-            "📝 LETTURA TESTO\n\n%s\n\nOCR completato!", 
+            "📝 LETTURA TESTO\n\n%s\n\n✅ OCR completato!", 
             response + 4);
     } else if(strncmp(response, "COUNT:", 6) == 0) {
         furi_string_printf(app->response_text, 
-            "🔢 CONTEGGIO OGGETTI\n\n%s\n\nConteggio completato!", 
+            "🔢 CONTEGGIO OGGETTI\n\n%s\n\n✅ Conteggio completato!", 
             response + 6);
     } else if(strncmp(response, "STATUS:", 7) == 0) {
         furi_string_printf(app->response_text, 
-            "📊 STATO SISTEMA\n\n%s\n\nControllo completato!", 
+            "📊 STATO SISTEMA\n\n%s\n\n✅ Controllo completato!", 
             response + 7);
     } else if(strncmp(response, "VOICE_RECOGNIZED:", 17) == 0) {
         furi_string_printf(app->response_text, 
-            "🎤 COMANDO VOCALE RICONOSCIUTO\n\n\"%s\"\n\nElaborazione in corso...", 
+            "🎤 COMANDO VOCALE RICONOSCIUTO\n\n\"%s\"\n\n🔄 Elaborazione in corso...", 
             response + 17);
     } else if(strncmp(response, "FLASH:", 6) == 0) {
         furi_string_printf(app->response_text, 
-            "💡 CONTROLLO FLASH LED\n\n%s\n\nStato aggiornato!", 
+            "💡 CONTROLLO FLASH LED\n\n%s\n\n✅ Stato aggiornato!", 
             response + 6);
     } else if(strncmp(response, "ERROR:", 6) == 0) {
         furi_string_printf(app->response_text, 
-            "❌ ERRORE\n\n%s\n\nRiprova o controlla connessioni.", 
+            "❌ ERRORE ESP32\n\n%s\n\n⚠️ Controlla connessioni e riprova.", 
             response + 6);
         app->current_state = StateError;
     } else if(strncmp(response, "READY", 5) == 0) {
         furi_string_set_str(app->response_text, 
-            "✅ SISTEMA PRONTO\n\nESP32-CAM connesso e funzionante.\nTutti i sistemi operativi.\n\nSeleziona comando dal menu.");
+            "✅ ESP32-CAM PRONTO\n\n🔗 Connesso e funzionante.\n💡 Tutti i sistemi operativi.\n🎯 Pronto per comandi AI!\n\n📋 Seleziona comando dal menu.");
     } else if(strncmp(response, "RECORDING", 9) == 0) {
         furi_string_set_str(app->response_text, 
-            "🎤 REGISTRAZIONE ATTIVA\n\n🔴 Registrazione in corso...\nParla nel microfono ESP32-CAM\n\nRilascia OK per elaborare.");
+            "🎤 REGISTRAZIONE ATTIVA\n\n🔴 Registrazione in corso...\n🎙️ Parla nel microfono ESP32-CAM\n\n⏹️ Rilascia OK per elaborare.");
         app->current_state = StatePTTActive;
     } else if(strncmp(response, "PROCESSING", 10) == 0) {
         furi_string_set_str(app->response_text, 
-            "🧠 ELABORAZIONE COMANDO VOCALE\n\n⏳ ESP32-CAM sta elaborando...\n\nAttendi risposta AI...");
+            "🧠 ELABORAZIONE COMANDO VOCALE\n\n⏳ ESP32-CAM sta elaborando...\n🤖 Speech-to-Text + AI\n\n⌛ Attendi risposta...");
     } else {
-        // Generic response
+        // Generic response - show full ESP32 response
         furi_string_printf(app->response_text, 
-            "📨 RISPOSTA ESP32-CAM\n\n%s\n\nComandi: %lu", 
+            "📨 RISPOSTA ESP32-CAM\n\n%s\n\n📊 Comandi inviati: %lu\n🔗 Comunicazione UART attiva", 
             response, app->command_count);
     }
     
     furi_mutex_release(app->data_mutex);
     
-    // Update UI
+    // Update UI on main thread
     app->current_state = StateIdle;
     text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
     view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewTextBox);
     
     // Success notification
     notification_message(app->notifications, &sequence_success);
+    
+    FURI_LOG_I(TAG, "✅ Response processed and displayed on Flipper");
 }
 
 // ===== SUBMENU CALLBACK =====
@@ -420,25 +405,25 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
     switch(index) {
         case GennaroAIMenuVision:
             furi_string_set_str(app->response_text, 
-                "👁️ ANALISI IMMAGINE\n\nInviando comando a ESP32-CAM...\n\nAttendi risposta AI...");
+                "👁️ ANALISI IMMAGINE\n\n📤 Inviando comando a ESP32-CAM...\n🔄 Attendi risposta AI...");
             send_esp32_command(app, "VISION");
             break;
             
         case GennaroAIMenuMath:
             furi_string_set_str(app->response_text, 
-                "🧮 MATH SOLVER\n\nInviando comando a ESP32-CAM...\n\nAttendi risoluzione...");
+                "🧮 MATH SOLVER\n\n📤 Inviando comando a ESP32-CAM...\n🔄 Attendi risoluzione...");
             send_esp32_command(app, "MATH");
             break;
             
         case GennaroAIMenuOCR:
             furi_string_set_str(app->response_text, 
-                "📝 LETTURA TESTO\n\nInviando comando a ESP32-CAM...\n\nAttendi OCR...");
+                "📝 LETTURA TESTO\n\n📤 Inviando comando a ESP32-CAM...\n🔄 Attendi OCR...");
             send_esp32_command(app, "OCR");
             break;
             
         case GennaroAIMenuCount:
             furi_string_set_str(app->response_text, 
-                "🔢 CONTEGGIO OGGETTI\n\nInviando comando a ESP32-CAM...\n\nAttendi conteggio...");
+                "🔢 CONTEGGIO OGGETTI\n\n📤 Inviando comando a ESP32-CAM...\n🔄 Attendi conteggio...");
             send_esp32_command(app, "COUNT");
             break;
             
@@ -448,36 +433,36 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
                 "• TIENI PREMUTO il pulsante OK\n"
                 "• PARLA nel microfono ESP32-CAM\n"
                 "• RILASCIA per elaborare\n\n"
-                "Pronto per comando vocale...");
+                "🎯 Pronto per comando vocale...");
             break;
             
         case GennaroAIMenuFlashOn:
             furi_string_set_str(app->response_text, 
-                "💡 ACCENSIONE FLASH LED\n\nInviando comando...");
+                "💡 ACCENSIONE FLASH LED\n\n📤 Inviando comando...");
             send_esp32_command(app, "FLASH_ON");
             break;
             
         case GennaroAIMenuFlashOff:
             furi_string_set_str(app->response_text, 
-                "🔲 SPEGNIMENTO FLASH LED\n\nInviando comando...");
+                "🔲 SPEGNIMENTO FLASH LED\n\n📤 Inviando comando...");
             send_esp32_command(app, "FLASH_OFF");
             break;
             
         case GennaroAIMenuFlashToggle:
             furi_string_set_str(app->response_text, 
-                "🔄 TOGGLE FLASH LED\n\nInviando comando...");
+                "🔄 TOGGLE FLASH LED\n\n📤 Inviando comando...");
             send_esp32_command(app, "FLASH_TOGGLE");
             break;
             
         case GennaroAIMenuStatus:
             furi_string_set_str(app->response_text, 
-                "📊 STATO SISTEMA\n\nVerificando ESP32-CAM...");
+                "📊 STATO SISTEMA\n\n📤 Verificando ESP32-CAM...");
             send_esp32_command(app, "STATUS");
             break;
             
         case GennaroAIMenuHelp:
             furi_string_set_str(app->response_text,
-                "❓ AIUTO - GENNARO AI\n\n"
+                "❓ AIUTO - GENNARO AI v2.0\n\n"
                 "🔌 COLLEGAMENTI:\n"
                 "Flipper GPIO13 → ESP32-CAM GPIO3\n"
                 "Flipper GPIO14 ← ESP32-CAM GPIO1\n"
@@ -495,7 +480,7 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
                 "Le risposte AI appaiono in tempo reale\n"
                 "sul display del Flipper.\n\n"
                 "🎤 PTT: Tieni OK per registrare.\n\n"
-                "⚡ Dual communication: UART + GPIO");
+                "⚡ UART + GPIO dual communication");
             break;
     }
     
@@ -526,7 +511,7 @@ static bool gennaro_ai_input_callback(InputEvent* event, void* context) {
                     "• Tieni premuto OK\n"
                     "• Parla nel microfono ESP32-CAM\n"
                     "• Rilascia per elaborare\n\n"
-                    "Registrazione in corso...");
+                    "🎙️ Registrazione in corso...");
                     
                 text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
                 notification_message(app->notifications, &sequence_single_vibro);
@@ -555,7 +540,7 @@ static bool gennaro_ai_input_callback(InputEvent* event, void* context) {
                         "• Speech-to-Text in corso\n"
                         "• Interpretazione comando\n"
                         "• Esecuzione azione AI\n\n"
-                        "Attendi risposta...");
+                        "📥 Attendi risposta sul Flipper...");
                 }
                 
                 text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
@@ -703,12 +688,12 @@ static void gennaro_ai_app_free(GennaroAIApp* app) {
 int32_t gennaro_ai_app(void* p) {
     UNUSED(p);
     
-    FURI_LOG_I(TAG, "Starting Gennaro AI for Momentum Firmware");
+    FURI_LOG_I(TAG, "🚀 Starting Gennaro AI v2.0 for Momentum Firmware");
     
     GennaroAIApp* app = gennaro_ai_app_alloc();
     
     if(!app) {
-        FURI_LOG_E(TAG, "Failed to allocate app");
+        FURI_LOG_E(TAG, "❌ Failed to allocate app");
         return -1;
     }
     
@@ -723,11 +708,11 @@ int32_t gennaro_ai_app(void* p) {
     notification_message(app->notifications, &sequence_display_backlight_on);
     notification_message(app->notifications, &sequence_single_vibro);
     
-    // Send initial status check
+    // Send initial status check to ESP32
     furi_delay_ms(1000);  // Give ESP32 time to boot
     send_esp32_command(app, "STATUS");
     
-    FURI_LOG_I(TAG, "App initialized, running view dispatcher");
+    FURI_LOG_I(TAG, "✅ App initialized, running view dispatcher - Ready for ESP32 responses!");
     
     // Run view dispatcher
     view_dispatcher_run(app->view_dispatcher);
@@ -736,7 +721,7 @@ int32_t gennaro_ai_app(void* p) {
     furi_record_close(RECORD_GUI);
     gennaro_ai_app_free(app);
     
-    FURI_LOG_I(TAG, "Gennaro AI terminated");
+    FURI_LOG_I(TAG, "🛑 Gennaro AI v2.0 terminated");
     
     return 0;
 }

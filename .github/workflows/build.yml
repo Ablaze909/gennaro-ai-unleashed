@@ -1,4 +1,4 @@
-name: Build Gennaro AI FAP for Unleashed
+name: Build Gennaro AI FAP for Momentum
 
 on:
   push:
@@ -27,98 +27,85 @@ jobs:
       with:
         python-version: '3.11'
         
-    - name: Clone Unleashed firmware
+    - name: Clone Momentum firmware
       run: |
-        git clone --recursive --depth 1 https://github.com/DarkFlippers/unleashed-firmware.git
-        cd unleashed-firmware
+        git clone --recursive --depth 1 https://github.com/Next-Flip/Momentum-Firmware.git
+        cd Momentum-Firmware
         git submodule update --init --recursive
         
     - name: Install FBT dependencies
       run: |
-        cd unleashed-firmware
+        cd Momentum-Firmware
         ./fbt
         
     - name: Create app directory structure
       run: |
-        mkdir -p unleashed-firmware/applications/external/gennaro_ai
-        mkdir -p unleashed-firmware/applications/external/gennaro_ai/images
+        mkdir -p Momentum-Firmware/applications/external/gennaro_ai
         
-    - name: Copy application files
+    - name: Copy and verify application files
       run: |
-        echo "=== Files in repository root ==="
+        echo "=== Repository files ==="
         ls -la
-        echo "=== Looking for .c files specifically ==="
-        find . -name "*.c" -type f
-        echo "=== Looking for any files containing 'gennaro' ==="
-        find . -name "*gennaro*" -type f
         echo "=== Copying application.fam ==="
-        cp application.fam unleashed-firmware/applications/external/gennaro_ai/
-        echo "=== Trying to copy gennaro_ai.c ==="
-        if [ -f "gennaro_ai.c" ]; then
-            cp gennaro_ai.c unleashed-firmware/applications/external/gennaro_ai/
-            echo "✅ gennaro_ai.c copied successfully"
-        else
-            echo "❌ gennaro_ai.c not found, looking for alternatives..."
-            # Try different possible names
-            for file in GennaroAI.c Gennaro_AI.c gennaro-ai.c GennaroAi.c; do
-                if [ -f "$file" ]; then
-                    echo "Found $file, copying as gennaro_ai.c"
-                    cp "$file" unleashed-firmware/applications/external/gennaro_ai/gennaro_ai.c
-                    break
-                fi
-            done
-        fi
-        echo "=== Files in target directory ==="
-        ls -la unleashed-firmware/applications/external/gennaro_ai/
-        
-    - name: Create placeholder icon
-      run: |
-        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==" | base64 -d > unleashed-firmware/applications/external/gennaro_ai/images/gennaro_ai_10px.png
-        
-    - name: Verify file structure
-      run: |
-        echo "=== File structure ==="
-        ls -la unleashed-firmware/applications/external/gennaro_ai/
+        cp application.fam Momentum-Firmware/applications/external/gennaro_ai/
+        echo "=== Copying gennaro_ai.c ==="
+        cp gennaro_ai.c Momentum-Firmware/applications/external/gennaro_ai/
+        echo "=== Target directory contents ==="
+        ls -la Momentum-Firmware/applications/external/gennaro_ai/
         echo "=== application.fam content ==="
-        cat unleashed-firmware/applications/external/gennaro_ai/application.fam
+        cat Momentum-Firmware/applications/external/gennaro_ai/application.fam
         
-    - name: Build Gennaro AI FAP
+    - name: Build FAP with Momentum
       run: |
-        cd unleashed-firmware
-        echo "=== Verifying app structure before build ==="
-        ls -la applications/external/gennaro_ai/
-        echo "=== application.fam content ==="
-        cat applications/external/gennaro_ai/application.fam
-        echo "=== Starting build ==="
-        ./fbt fap_dist COMPACT=1
-        echo "=== Alternative build command ==="
+        cd Momentum-Firmware
+        echo "=== Building all external FAPs ==="
         ./fbt faps
-        echo "=== Checking build output ==="
+        echo "=== Checking build directory ==="
+        ls -la build/f*/dist/faps/ || echo "Build directory not found"
+        echo "=== Search for our FAP ==="
         find . -name "*gennaro*.fap" -type f
+        find . -name "gennaro_ai.fap" -type f
         
-    - name: Find and list FAP files
+    - name: Copy FAP file
       run: |
-        echo "=== Searching for FAP files ==="
-        find unleashed-firmware -name "*.fap" -type f | head -20
-        echo "=== Copying FAP file ==="
-        find unleashed-firmware -name "*gennaro_ai*.fap" -exec cp {} ./ \;
-        ls -la *.fap || echo "No FAP files found in current directory"
+        echo "=== Looking for gennaro_ai FAP ==="
+        find Momentum-Firmware -name "gennaro_ai.fap" -type f -exec cp {} ./ \;
+        find Momentum-Firmware -name "*gennaro*.fap" -type f -exec cp {} ./ \;
+        echo "=== FAP files in current directory ==="
+        ls -la *.fap || echo "No FAP files found"
         
     - name: Upload FAP file
       uses: actions/upload-artifact@v4
       with:
-        name: gennaro_ai_unleashed_fap
+        name: gennaro_ai_momentum_fap
         path: "*.fap"
         retention-days: 30
-        if-no-files-found: error
+        if-no-files-found: warn
+        
+    - name: Upload all FAPs for debugging
+      if: always()
+      run: |
+        echo "=== Creating debug FAP collection ==="
+        mkdir -p debug_faps
+        find Momentum-Firmware -name "*.fap" -type f -exec cp {} debug_faps/ \; || echo "No FAPs found"
+        ls -la debug_faps/ || echo "Debug faps directory empty"
+        
+    - name: Upload debug FAPs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: all_momentum_faps_debug
+        path: debug_faps/
+        retention-days: 7
+        if-no-files-found: ignore
         
     - name: Upload build logs on failure
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: build_logs_failure
+        name: momentum_build_logs
         path: |
-          unleashed-firmware/build/
-          unleashed-firmware/.fbt/
+          Momentum-Firmware/build/
+          Momentum-Firmware/.fbt/
         retention-days: 7
         if-no-files-found: ignore

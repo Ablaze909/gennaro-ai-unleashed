@@ -1,7 +1,7 @@
 /*
- * GENNARO AI - FLIPPER ZERO UNLEASHED
- * AI Vision Assistant con ESP32-CAM
- * Compatibile con Unleashed Firmware
+ * GENNARO AI - FLIPPER ZERO UNLEASHED/MOMENTUM
+ * AI Vision Assistant con ESP32-CAM + Flash Control
+ * Compatibile con Unleashed e Momentum Firmware
  */
 
 #include <furi.h>
@@ -34,6 +34,9 @@ typedef enum {
     GennaroAIMenuOCR,
     GennaroAIMenuCount,
     GennaroAIMenuPTT,
+    GennaroAIMenuFlashOn,
+    GennaroAIMenuFlashOff,
+    GennaroAIMenuFlashToggle,
     GennaroAIMenuStatus,
     GennaroAIMenuHelp,
 } GennaroAIMenuItem;
@@ -54,6 +57,9 @@ typedef struct {
     // PTT state
     bool ptt_active;
     uint32_t ptt_start_time;
+    
+    // Flash state
+    bool flash_state;
     
 } GennaroAIApp;
 
@@ -125,6 +131,33 @@ static void send_esp32_command(GennaroAIApp* app, const char* command) {
             furi_hal_gpio_write(ESP32_TX_PIN, false);
             furi_delay_ms(25);
         }
+    } else if(strcmp(command, "FLASH_ON") == 0) {
+        // FLASH_ON: 8 pulses
+        for(int i = 0; i < 8; i++) {
+            furi_hal_gpio_write(ESP32_TX_PIN, true);
+            furi_delay_ms(40);
+            furi_hal_gpio_write(ESP32_TX_PIN, false);
+            furi_delay_ms(40);
+        }
+        app->flash_state = true;
+    } else if(strcmp(command, "FLASH_OFF") == 0) {
+        // FLASH_OFF: 9 pulses
+        for(int i = 0; i < 9; i++) {
+            furi_hal_gpio_write(ESP32_TX_PIN, true);
+            furi_delay_ms(35);
+            furi_hal_gpio_write(ESP32_TX_PIN, false);
+            furi_delay_ms(35);
+        }
+        app->flash_state = false;
+    } else if(strcmp(command, "FLASH_TOGGLE") == 0) {
+        // FLASH_TOGGLE: 10 pulses
+        for(int i = 0; i < 10; i++) {
+            furi_hal_gpio_write(ESP32_TX_PIN, true);
+            furi_delay_ms(30);
+            furi_hal_gpio_write(ESP32_TX_PIN, false);
+            furi_delay_ms(30);
+        }
+        app->flash_state = !app->flash_state;
     }
     
     // End signal
@@ -227,8 +260,74 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
                 "• \"Cosa vedi?\" → Analisi\n"
                 "• \"Risolvi\" → Math\n"
                 "• \"Leggi testo\" → OCR\n"
-                "• \"Conta oggetti\" → Count\n\n"
+                "• \"Conta oggetti\" → Count\n"
+                "• \"Accendi flash\" → Flash On\n"
+                "• \"Spegni flash\" → Flash Off\n"
+                "• \"Flash\" → Flash Toggle\n\n"
                 "🎯 Tieni premuto OK per iniziare!");
+            break;
+            
+        case GennaroAIMenuFlashOn:
+            furi_string_printf(app->response_text,
+                "💡 FLASH LED ACCESO\n\n"
+                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
+                "ESP32-CAM ha acceso il LED flash\n"
+                "integrato per migliorare l'illuminazione\n"
+                "delle foto in condizioni di scarsa luce.\n\n"
+                "Il flash rimarrà acceso fino a quando\n"
+                "non viene spento manualmente.\n\n"
+                "💡 UTILE PER:\n"
+                "• Foto al buio\n"
+                "• OCR su testo poco illuminato\n"
+                "• Migliore riconoscimento oggetti\n\n"
+                "Pattern GPIO: 8 impulsi\n"
+                "Flash: ACCESO\n"
+                "Comandi inviati: %lu",
+                app->command_count + 1);
+            send_esp32_command(app, "FLASH_ON");
+            break;
+            
+        case GennaroAIMenuFlashOff:
+            furi_string_printf(app->response_text,
+                "🔦 FLASH LED SPENTO\n\n"
+                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
+                "ESP32-CAM ha spento il LED flash\n"
+                "integrato per risparmiare energia\n"
+                "e tornare alle condizioni normali.\n\n"
+                "Il flash è ora disattivato e verrà\n"
+                "utilizzata solo la luce ambientale.\n\n"
+                "🔋 VANTAGGI:\n"
+                "• Risparmio batteria\n"
+                "• Nessun riflesso indesiderato\n"
+                "• Modalità discreta\n\n"
+                "Pattern GPIO: 9 impulsi\n"
+                "Flash: SPENTO\n"
+                "Comandi inviati: %lu",
+                app->command_count + 1);
+            send_esp32_command(app, "FLASH_OFF");
+            break;
+            
+        case GennaroAIMenuFlashToggle:
+            furi_string_printf(app->response_text,
+                "🔄 FLASH LED TOGGLE\n\n"
+                "Comando inviato a ESP32-CAM via GPIO13.\n\n"
+                "ESP32-CAM alternerà automaticamente\n"
+                "lo stato del LED flash:\n"
+                "• Se spento → si accende\n"
+                "• Se acceso → si spegne\n\n"
+                "🚀 CONTROLLO RAPIDO:\n"
+                "Utile per controllo rapido\n"
+                "dell'illuminazione senza dover\n"
+                "sapere lo stato attuale.\n\n"
+                "⚡ Il comando più veloce per\n"
+                "gestire il flash!\n\n"
+                "Pattern GPIO: 10 impulsi\n"
+                "Flash: %s → %s\n"
+                "Comandi inviati: %lu",
+                app->flash_state ? "ACCESO" : "SPENTO",
+                app->flash_state ? "SPENTO" : "ACCESO",
+                app->command_count + 1);
+            send_esp32_command(app, "FLASH_TOGGLE");
             break;
             
         case GennaroAIMenuStatus:
@@ -238,10 +337,15 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
                 "Verificando:\n"
                 "• Connessione WiFi\n"
                 "• Stato camera\n"
+                "• Stato microfono\n"
+                "• Stato flash LED\n"
                 "• API Claude/Google\n"
-                "• Memoria disponibile\n\n"
+                "• Memoria disponibile\n"
+                "• Frequenza CPU\n\n"
                 "Lo stato completo sarà mostrato\n"
                 "nel monitor seriale ESP32-CAM.\n\n"
+                "🔍 Include anche informazioni\n"
+                "dettagliate sulle performance.\n\n"
                 "Pattern GPIO: 1 impulso lungo\n"
                 "Comandi inviati: %lu",
                 app->command_count + 1);
@@ -262,13 +366,20 @@ static void gennaro_ai_submenu_callback(void* context, uint32_t index) {
                 "• OCR: Legge testo\n"
                 "• Count: Conta oggetti\n"
                 "• PTT: Push-to-talk vocale\n"
+                "• Flash On/Off/Toggle: Controllo LED\n"
                 "• Status: Verifica sistema\n\n"
                 "📺 RISPOSTE:\n"
                 "Controlla monitor seriale ESP32-CAM\n"
                 "per vedere le risposte AI complete.\n\n"
-                "⚡ GPIO13 invia pattern di impulsi\n"
-                "diversi per ogni comando.\n\n"
-                "🎤 PTT: Tieni OK per registrare voce.");
+                "⚡ PATTERN GPIO:\n"
+                "Ogni comando invia impulsi diversi\n"
+                "su GPIO13 per identificazione.\n\n"
+                "💡 FLASH:\n"
+                "Migliora drasticamente foto al buio\n"
+                "e riconoscimento testo/oggetti.\n\n"
+                "🎤 COMANDI VOCALI:\n"
+                "\"Accendi/spegni flash\" funziona\n"
+                "anche con Push-to-Talk!");
             break;
     }
     
@@ -299,6 +410,14 @@ static bool gennaro_ai_input_callback(InputEvent* event, void* context) {
                     "• Tieni premuto OK\n"
                     "• Parla nel microfono ESP32-CAM\n"
                     "• Rilascia per elaborare\n\n"
+                    "💡 COMANDI VOCALI:\n"
+                    "• \"Cosa vedi?\" → Vision\n"
+                    "• \"Risolvi\" → Math\n"
+                    "• \"Leggi testo\" → OCR\n"
+                    "• \"Conta oggetti\" → Count\n"
+                    "• \"Accendi flash\" → Flash On\n"
+                    "• \"Spegni flash\" → Flash Off\n"
+                    "• \"Flash\" → Flash Toggle\n\n"
                     "Pattern GPIO: 6 impulsi inviati\n"
                     "Microfono ESP32-CAM in ascolto...");
                     
@@ -323,7 +442,12 @@ static bool gennaro_ai_input_callback(InputEvent* event, void* context) {
                         "Tieni premuto OK più a lungo\n"
                         "per registrare comando vocale.\n\n"
                         "Durata minima: 0.5 secondi\n"
-                        "Riprova con pressione più lunga.");
+                        "Riprova con pressione più lunga.\n\n"
+                        "💡 SUGGERIMENTO:\n"
+                        "1. Premi e tieni OK\n"
+                        "2. Aspetta il feedback vibrazione\n"
+                        "3. Parla chiaramente\n"
+                        "4. Rilascia dopo aver parlato");
                 } else {
                     // Send PTT_STOP to ESP32-CAM
                     send_esp32_command(app, "PTT_STOP");
@@ -331,144 +455,15 @@ static bool gennaro_ai_input_callback(InputEvent* event, void* context) {
                     furi_string_set_str(app->response_text,
                         "🧠 ELABORAZIONE COMANDO VOCALE\n\n"
                         "⏳ ESP32-CAM sta elaborando...\n\n"
-                        "• Speech-to-Text (Google)\n"
-                        "• Interpretazione comando\n"
-                        "• Esecuzione azione AI\n\n"
-                        "Pattern GPIO: 7 impulsi inviati\n\n"
+                        "🔄 PROCESSO:\n"
+                        "1. ✅ Audio registrato\n"
+                        "2. 🔄 Speech-to-Text (Google)\n"
+                        "3. ⏳ Interpretazione comando\n"
+                        "4. ⏳ Esecuzione azione AI\n\n"
+                        "📡 Pattern GPIO: 7 impulsi inviati\n\n"
+                        "📺 RISULTATO:\n"
                         "Controlla monitor seriale ESP32-CAM\n"
                         "per vedere la risposta completa.\n\n"
-                        "Comando vocale in elaborazione...");
-                }
-                
-                text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
-                
-                // Double vibration feedback
-                notification_message(app->notifications, &sequence_double_vibro);
-                
-                consumed = true;
-            }
-        }
-    }
-    
-    // Handle back button
-    if(event->key == InputKeyBack && event->type == InputTypePress) {
-        view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewSubmenu);
-        consumed = true;
-    }
-    
-    return consumed;
-}
-
-// Navigation callbacks
-static uint32_t gennaro_ai_navigation_exit_callback(void* context) {
-    UNUSED(context);
-    return VIEW_NONE;
-}
-
-static uint32_t gennaro_ai_navigation_submenu_callback(void* context) {
-    UNUSED(context);
-    return GennaroAIViewSubmenu;
-}
-
-// App allocation
-static GennaroAIApp* gennaro_ai_app_alloc() {
-    GennaroAIApp* app = malloc(sizeof(GennaroAIApp));
-    
-    // Initialize variables
-    app->response_text = furi_string_alloc();
-    app->esp32_connected = false;
-    app->command_count = 0;
-    app->ptt_active = false;
-    app->ptt_start_time = 0;
-    
-    // Get notifications
-    app->notifications = furi_record_open(RECORD_NOTIFICATION);
-    
-    // Create view dispatcher
-    app->view_dispatcher = view_dispatcher_alloc();
-    view_dispatcher_enable_queue(app->view_dispatcher);
-    
-    // Create submenu
-    app->submenu = submenu_alloc();
-    submenu_add_item(app->submenu, "👁️ Analizza Immagine", GennaroAIMenuVision, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🧮 Risolvi Calcoli", GennaroAIMenuMath, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "📝 Leggi Testo (OCR)", GennaroAIMenuOCR, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🔢 Conta Oggetti", GennaroAIMenuCount, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🎤 Push-to-Talk", GennaroAIMenuPTT, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "📊 Stato Sistema", GennaroAIMenuStatus, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "❓ Aiuto", GennaroAIMenuHelp, gennaro_ai_submenu_callback, app);
-    
-    view_set_previous_callback(submenu_get_view(app->submenu), gennaro_ai_navigation_exit_callback);
-    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewSubmenu, submenu_get_view(app->submenu));
-    
-    // Create text box
-    app->text_box = text_box_alloc();
-    text_box_set_focus(app->text_box, TextBoxFocusStart);
-    view_set_previous_callback(text_box_get_view(app->text_box), gennaro_ai_navigation_submenu_callback);
-    view_set_input_callback(text_box_get_view(app->text_box), gennaro_ai_input_callback);
-    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewTextBox, text_box_get_view(app->text_box));
-    
-    // Create loading view
-    app->loading = loading_alloc();
-    view_set_previous_callback(loading_get_view(app->loading), gennaro_ai_navigation_submenu_callback);
-    view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewLoading, loading_get_view(app->loading));
-    
-    return app;
-}
-
-// App deallocation
-static void gennaro_ai_app_free(GennaroAIApp* app) {
-    furi_assert(app);
-    
-    // Remove views
-    view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewSubmenu);
-    view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewTextBox);
-    view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewLoading);
-    
-    // Free views
-    submenu_free(app->submenu);
-    text_box_free(app->text_box);
-    loading_free(app->loading);
-    
-    // Free view dispatcher
-    view_dispatcher_free(app->view_dispatcher);
-    
-    // Free response string
-    furi_string_free(app->response_text);
-    
-    // Close notifications
-    furi_record_close(RECORD_NOTIFICATION);
-    
-    free(app);
-}
-
-// Main app entry point
-int32_t gennaro_ai_app(void* p) {
-    UNUSED(p);
-    
-    GennaroAIApp* app = gennaro_ai_app_alloc();
-    
-    // Attach to GUI
-    Gui* gui = furi_record_open(RECORD_GUI);
-    view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
-    
-    // Initialize GPIO
-    furi_hal_gpio_init(ESP32_TX_PIN, GpioModeOutputPushPull, GpioPullNo, GpioSpeedVeryHigh);
-    furi_hal_gpio_init(ESP32_RX_PIN, GpioModeInput, GpioPullUp, GpioSpeedVeryHigh);
-    
-    // Set starting view
-    view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewSubmenu);
-    
-    // Welcome notification
-    notification_message(app->notifications, &sequence_display_backlight_on);
-    notification_message(app->notifications, &sequence_single_vibro);
-    
-    // Run view dispatcher
-    view_dispatcher_run(app->view_dispatcher);
-    
-    // Cleanup
-    furi_record_close(RECORD_GUI);
-    gennaro_ai_app_free(app);
-    
-    return 0;
-}
+                        "⚡ Il comando vocale viene elaborato\n"
+                        "e l'azione corrispondente eseguita\n"
+                        "automaticamente.");

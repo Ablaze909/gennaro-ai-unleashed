@@ -67,9 +67,28 @@ jobs:
       run: |
         echo "=== Copying application files ==="
         
+        # Remove any existing directory first to force refresh
+        rm -rf Momentum-Firmware/applications/external/gennaro_ai
+        
+        # Create fresh directory
+        mkdir -p Momentum-Firmware/applications/external/gennaro_ai
+        
         # Copy main application files
         cp application.fam Momentum-Firmware/applications/external/gennaro_ai/
         cp gennaro_ai.c Momentum-Firmware/applications/external/gennaro_ai/
+        
+        # Create a simple default icon to satisfy the build system
+        echo "Creating default icon..."
+        # Create a minimal 1x1 PNG as fallback
+        echo -e '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\tpHYs\x00\x00\x0b\x13\x00\x00\x0b\x13\x01\x00\x9a\x9c\x18\x00\x00\x00\nIDATx\x9cc\xf8\x00\x00\x00\x01\x00\x01\x00\x00\x00\x00IEND\xaeB`\x82' > temp_icon.png
+        
+        # Use a working icon from another app as template
+        find Momentum-Firmware -name "*.png" -type f | head -1 | xargs -I {} cp {} Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai_icon.png || echo "No icon template found"
+        
+        # If no icon found, create a simple one
+        if [ ! -f "Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai_icon.png" ]; then
+          cp temp_icon.png Momentum-Firmware/applications/external/gennaro_ai/gennaro_ai_icon.png
+        fi
         
         echo "=== Verifying copied files ==="
         ls -la Momentum-Firmware/applications/external/gennaro_ai/

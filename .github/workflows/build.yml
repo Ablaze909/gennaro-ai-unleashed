@@ -71,16 +71,6 @@ jobs:
         cp application.fam Momentum-Firmware/applications/external/gennaro_ai/
         cp gennaro_ai.c Momentum-Firmware/applications/external/gennaro_ai/
         
-        # Copy icon if exists
-        if [ -f "gennaro_ai_icon.png" ]; then
-          cp gennaro_ai_icon.png Momentum-Firmware/applications/external/gennaro_ai/
-        fi
-        
-        # Copy additional icons if they exist
-        if [ -d "icons" ]; then
-          cp -r icons/* Momentum-Firmware/applications/external/gennaro_ai/icons/
-        fi
-        
         echo "=== Verifying copied files ==="
         ls -la Momentum-Firmware/applications/external/gennaro_ai/
         

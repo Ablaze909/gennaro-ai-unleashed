@@ -5,7 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:  # Permette trigger manuale
+  workflow_dispatch:
 
 jobs:
   build:
@@ -45,18 +45,34 @@ jobs:
         
     - name: Copy application files
       run: |
-        # Verifica che i file esistano nel repository
         echo "=== Files in repository root ==="
         ls -la
-        echo "=== Copying files ==="
+        echo "=== Looking for .c files specifically ==="
+        find . -name "*.c" -type f
+        echo "=== Looking for any files containing 'gennaro' ==="
+        find . -name "*gennaro*" -type f
+        echo "=== Copying application.fam ==="
         cp application.fam unleashed-firmware/applications/external/gennaro_ai/
-        cp gennaro_ai.c unleashed-firmware/applications/external/gennaro_ai/
-        echo "=== Files copied successfully ==="
+        echo "=== Trying to copy gennaro_ai.c ==="
+        if [ -f "gennaro_ai.c" ]; then
+            cp gennaro_ai.c unleashed-firmware/applications/external/gennaro_ai/
+            echo "✅ gennaro_ai.c copied successfully"
+        else
+            echo "❌ gennaro_ai.c not found, looking for alternatives..."
+            # Try different possible names
+            for file in GennaroAI.c Gennaro_AI.c gennaro-ai.c GennaroAi.c; do
+                if [ -f "$file" ]; then
+                    echo "Found $file, copying as gennaro_ai.c"
+                    cp "$file" unleashed-firmware/applications/external/gennaro_ai/gennaro_ai.c
+                    break
+                fi
+            done
+        fi
+        echo "=== Files in target directory ==="
         ls -la unleashed-firmware/applications/external/gennaro_ai/
         
     - name: Create placeholder icon
       run: |
-        # Crea un'icona placeholder se non esiste
         echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==" | base64 -d > unleashed-firmware/applications/external/gennaro_ai/images/gennaro_ai_10px.png
         
     - name: Verify file structure
@@ -74,7 +90,11 @@ jobs:
         echo "=== application.fam content ==="
         cat applications/external/gennaro_ai/application.fam
         echo "=== Starting build ==="
-        ./fbt fap_gennaro_ai
+        ./fbt fap_dist COMPACT=1
+        echo "=== Alternative build command ==="
+        ./fbt faps
+        echo "=== Checking build output ==="
+        find . -name "*gennaro*.fap" -type f
         
     - name: Find and list FAP files
       run: |

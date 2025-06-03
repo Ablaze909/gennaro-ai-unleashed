@@ -7,11 +7,11 @@ App(
         "gui",
         "notification",
     ],
-    stack_size=8 * 1024,  # Reduced from 16KB - the serial monitor doesn't need that much
+    stack_size=4 * 1024,  # Further reduced to 4KB - safe for simple operations
     order=20,
     fap_category="GPIO",
     fap_author="GennaroAI Team",
-    fap_version="2.1",  # Updated version
-    fap_description="AI Vision Assistant with ESP32-CAM - Serial Monitor Interface",
-    fap_icon_assets="icon.png",  # Standard icon reference
+    fap_version="2.1-SAFE",
+    fap_description="AI Vision Assistant - Safe Serial Monitor",
+    fap_icon_assets="icon.png",
 )

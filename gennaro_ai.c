@@ -319,74 +319,78 @@ static void send_esp32_command(GennaroAIApp* app, const char* command) {
 // ===== RESPONSE PROCESSING =====
 
 static void process_esp32_response(GennaroAIApp* app, const char* response) {
-    if(!response || strlen(response) == 0) return;
+    if(!app || !response || strlen(response) == 0) return;
     
     FURI_LOG_I(TAG, "📥 Processing ESP32 response: %s", response);
     
-    furi_mutex_acquire(app->data_mutex, FuriWaitForever);
-    
-    // Parse response type and content
-    if(strncmp(response, "VISION:", 7) == 0) {
-        furi_string_printf(app->response_text, 
-            "👁️ ANALISI IMMAGINE\n\n%s\n\n✅ Risposta AI ricevuta sul Flipper!", 
-            response + 7);
-    } else if(strncmp(response, "MATH:", 5) == 0) {
-        furi_string_printf(app->response_text, 
-            "🧮 MATH SOLVER\n\n%s\n\n✅ Calcolo completato!", 
-            response + 5);
-    } else if(strncmp(response, "OCR:", 4) == 0) {
-        furi_string_printf(app->response_text, 
-            "📝 LETTURA TESTO\n\n%s\n\n✅ OCR completato!", 
-            response + 4);
-    } else if(strncmp(response, "COUNT:", 6) == 0) {
-        furi_string_printf(app->response_text, 
-            "🔢 CONTEGGIO OGGETTI\n\n%s\n\n✅ Conteggio completato!", 
-            response + 6);
-    } else if(strncmp(response, "STATUS:", 7) == 0) {
-        furi_string_printf(app->response_text, 
-            "📊 STATO SISTEMA\n\n%s\n\n✅ Controllo completato!", 
-            response + 7);
-    } else if(strncmp(response, "VOICE_RECOGNIZED:", 17) == 0) {
-        furi_string_printf(app->response_text, 
-            "🎤 COMANDO VOCALE RICONOSCIUTO\n\n\"%s\"\n\n🔄 Elaborazione in corso...", 
-            response + 17);
-    } else if(strncmp(response, "FLASH:", 6) == 0) {
-        furi_string_printf(app->response_text, 
-            "💡 CONTROLLO FLASH LED\n\n%s\n\n✅ Stato aggiornato!", 
-            response + 6);
-    } else if(strncmp(response, "ERROR:", 6) == 0) {
-        furi_string_printf(app->response_text, 
-            "❌ ERRORE ESP32\n\n%s\n\n⚠️ Controlla connessioni e riprova.", 
-            response + 6);
-        app->current_state = StateError;
-    } else if(strncmp(response, "READY", 5) == 0) {
-        furi_string_set_str(app->response_text, 
-            "✅ ESP32-CAM PRONTO\n\n🔗 Connesso e funzionante.\n💡 Tutti i sistemi operativi.\n🎯 Pronto per comandi AI!\n\n📋 Seleziona comando dal menu.");
-    } else if(strncmp(response, "RECORDING", 9) == 0) {
-        furi_string_set_str(app->response_text, 
-            "🎤 REGISTRAZIONE ATTIVA\n\n🔴 Registrazione in corso...\n🎙️ Parla nel microfono ESP32-CAM\n\n⏹️ Rilascia OK per elaborare.");
-        app->current_state = StatePTTActive;
-    } else if(strncmp(response, "PROCESSING", 10) == 0) {
-        furi_string_set_str(app->response_text, 
-            "🧠 ELABORAZIONE COMANDO VOCALE\n\n⏳ ESP32-CAM sta elaborando...\n🤖 Speech-to-Text + AI\n\n⌛ Attendi risposta...");
-    } else {
-        // Generic response - show full ESP32 response
-        furi_string_printf(app->response_text, 
-            "📨 RISPOSTA ESP32-CAM\n\n%s\n\n📊 Comandi inviati: %lu\n🔗 Comunicazione UART attiva", 
-            response, app->command_count);
+    // SAFE mutex operation
+    if(app->data_mutex) {
+        furi_mutex_acquire(app->data_mutex, FuriWaitForever);
     }
     
-    furi_mutex_release(app->data_mutex);
+    // Parse response type and content SAFELY
+    if(app->response_text) {
+        if(strncmp(response, "VISION:", 7) == 0) {
+            furi_string_printf(app->response_text, 
+                "👁️ ANALISI IMMAGINE\n\n%s\n\n✅ Risposta AI ricevuta sul Flipper!", 
+                response + 7);
+        } else if(strncmp(response, "MATH:", 5) == 0) {
+            furi_string_printf(app->response_text, 
+                "🧮 MATH SOLVER\n\n%s\n\n✅ Calcolo completato!", 
+                response + 5);
+        } else if(strncmp(response, "OCR:", 4) == 0) {
+            furi_string_printf(app->response_text, 
+                "📝 LETTURA TESTO\n\n%s\n\n✅ OCR completato!", 
+                response + 4);
+        } else if(strncmp(response, "COUNT:", 6) == 0) {
+            furi_string_printf(app->response_text, 
+                "🔢 CONTEGGIO OGGETTI\n\n%s\n\n✅ Conteggio completato!", 
+                response + 6);
+        } else if(strncmp(response, "STATUS:", 7) == 0) {
+            furi_string_printf(app->response_text, 
+                "📊 STATO SISTEMA\n\n%s\n\n✅ Controllo completato!", 
+                response + 7);
+        } else if(strncmp(response, "FLASH:", 6) == 0) {
+            furi_string_printf(app->response_text, 
+                "💡 CONTROLLO FLASH LED\n\n%s\n\n✅ Stato aggiornato!", 
+                response + 6);
+        } else if(strncmp(response, "ERROR:", 6) == 0) {
+            furi_string_printf(app->response_text, 
+                "❌ ERRORE ESP32\n\n%s\n\n⚠️ Controlla connessioni.", 
+                response + 6);
+            app->current_state = StateError;
+        } else if(strncmp(response, "READY", 5) == 0) {
+            furi_string_set_str(app->response_text, 
+                "✅ ESP32-CAM PRONTO\n\n🔗 Connesso e funzionante.\n🎯 Pronto per comandi AI!\n\n📋 Seleziona comando dal menu.");
+        } else {
+            // Generic response - show full ESP32 response
+            furi_string_printf(app->response_text, 
+                "📨 RISPOSTA ESP32\n\n%s\n\n📊 Comandi: %lu", 
+                response, app->command_count);
+        }
+    }
     
-    // Update UI on main thread
+    if(app->data_mutex) {
+        furi_mutex_release(app->data_mutex);
+    }
+    
+    // Update UI SAFELY on main thread
     app->current_state = StateIdle;
-    text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
-    view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewTextBox);
+    
+    if(app->text_box && app->response_text) {
+        text_box_set_text(app->text_box, furi_string_get_cstr(app->response_text));
+    }
+    
+    if(app->view_dispatcher) {
+        view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewTextBox);
+    }
     
     // Success notification
-    notification_message(app->notifications, &sequence_success);
+    if(app->notifications) {
+        notification_message(app->notifications, &sequence_success);
+    }
     
-    FURI_LOG_I(TAG, "✅ Response processed and displayed on Flipper");
+    FURI_LOG_I(TAG, "✅ Response processed and displayed");
 }
 
 // ===== SUBMENU CALLBACK =====
@@ -575,10 +579,25 @@ static uint32_t gennaro_ai_navigation_submenu_callback(void* context) {
 
 static GennaroAIApp* gennaro_ai_app_alloc() {
     GennaroAIApp* app = malloc(sizeof(GennaroAIApp));
+    if(!app) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate app memory");
+        return NULL;
+    }
+    
+    // Initialize ALL pointers to NULL first (CRITICAL)
+    memset(app, 0, sizeof(GennaroAIApp));
     
     // Initialize strings and state
     app->response_text = furi_string_alloc();
     app->temp_buffer = furi_string_alloc();
+    if(!app->response_text || !app->temp_buffer) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate strings");
+        if(app->response_text) furi_string_free(app->response_text);
+        if(app->temp_buffer) furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
+    
     app->current_state = StateIdle;
     app->command_count = 0;
     app->ptt_active = false;
@@ -587,36 +606,90 @@ static GennaroAIApp* gennaro_ai_app_alloc() {
     app->response_complete = false;
     memset(app->response_buffer, 0, sizeof(app->response_buffer));
     
-    // Initialize communication - Derek Jamison WORKING approach
-    app->serial_handle = NULL;
-    app->rx_stream = furi_stream_buffer_alloc(2048, 1);  // Larger buffer for ESP32 responses
+    // Initialize communication - SAFE allocation
+    app->rx_stream = furi_stream_buffer_alloc(1024, 1);  // Reduced buffer size
     app->data_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    if(!app->rx_stream || !app->data_mutex) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate communication resources");
+        // Cleanup on failure
+        if(app->rx_stream) furi_stream_buffer_free(app->rx_stream);
+        if(app->data_mutex) furi_mutex_free(app->data_mutex);
+        furi_string_free(app->response_text);
+        furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
+    
     app->uart_init_by_app = false;
     
     // Get notifications
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
+    if(!app->notifications) {
+        FURI_LOG_E(TAG, "❌ Failed to open notifications");
+        furi_stream_buffer_free(app->rx_stream);
+        furi_mutex_free(app->data_mutex);
+        furi_string_free(app->response_text);
+        furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
     
     // Create view dispatcher
     app->view_dispatcher = view_dispatcher_alloc();
+    if(!app->view_dispatcher) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate view dispatcher");
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_stream_buffer_free(app->rx_stream);
+        furi_mutex_free(app->data_mutex);
+        furi_string_free(app->response_text);
+        furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
     
     // Create submenu
     app->submenu = submenu_alloc();
-    submenu_add_item(app->submenu, "👁️ Analizza Immagine", GennaroAIMenuVision, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🧮 Risolvi Calcoli", GennaroAIMenuMath, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "📝 Leggi Testo (OCR)", GennaroAIMenuOCR, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🔢 Conta Oggetti", GennaroAIMenuCount, gennaro_ai_submenu_callback, app);
+    if(!app->submenu) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate submenu");
+        view_dispatcher_free(app->view_dispatcher);
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_stream_buffer_free(app->rx_stream);
+        furi_mutex_free(app->data_mutex);
+        furi_string_free(app->response_text);
+        furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
+    
+    submenu_add_item(app->submenu, "👁️ Vision Analysis", GennaroAIMenuVision, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "🧮 Math Solver", GennaroAIMenuMath, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "📝 OCR Text", GennaroAIMenuOCR, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "🔢 Count Objects", GennaroAIMenuCount, gennaro_ai_submenu_callback, app);
     submenu_add_item(app->submenu, "🎤 Push-to-Talk", GennaroAIMenuPTT, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "💡 Flash LED ON", GennaroAIMenuFlashOn, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🔲 Flash LED OFF", GennaroAIMenuFlashOff, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "🔄 Toggle Flash", GennaroAIMenuFlashToggle, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "📊 Stato Sistema", GennaroAIMenuStatus, gennaro_ai_submenu_callback, app);
-    submenu_add_item(app->submenu, "❓ Aiuto", GennaroAIMenuHelp, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "💡 Flash ON", GennaroAIMenuFlashOn, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "🔲 Flash OFF", GennaroAIMenuFlashOff, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "🔄 Flash Toggle", GennaroAIMenuFlashToggle, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "📊 System Status", GennaroAIMenuStatus, gennaro_ai_submenu_callback, app);
+    submenu_add_item(app->submenu, "❓ Help", GennaroAIMenuHelp, gennaro_ai_submenu_callback, app);
     
     view_set_previous_callback(submenu_get_view(app->submenu), gennaro_ai_navigation_exit_callback);
     view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewSubmenu, submenu_get_view(app->submenu));
     
     // Create text box
     app->text_box = text_box_alloc();
+    if(!app->text_box) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate text box");
+        submenu_free(app->submenu);
+        view_dispatcher_free(app->view_dispatcher);
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_stream_buffer_free(app->rx_stream);
+        furi_mutex_free(app->data_mutex);
+        furi_string_free(app->response_text);
+        furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
+    
     text_box_set_focus(app->text_box, TextBoxFocusStart);
     view_set_previous_callback(text_box_get_view(app->text_box), gennaro_ai_navigation_submenu_callback);
     view_set_input_callback(text_box_get_view(app->text_box), gennaro_ai_input_callback);
@@ -624,63 +697,109 @@ static GennaroAIApp* gennaro_ai_app_alloc() {
     
     // Create loading view
     app->loading = loading_alloc();
+    if(!app->loading) {
+        FURI_LOG_E(TAG, "❌ Failed to allocate loading view");
+        text_box_free(app->text_box);
+        submenu_free(app->submenu);
+        view_dispatcher_free(app->view_dispatcher);
+        furi_record_close(RECORD_NOTIFICATION);
+        furi_stream_buffer_free(app->rx_stream);
+        furi_mutex_free(app->data_mutex);
+        furi_string_free(app->response_text);
+        furi_string_free(app->temp_buffer);
+        free(app);
+        return NULL;
+    }
+    
     view_set_previous_callback(loading_get_view(app->loading), gennaro_ai_navigation_submenu_callback);
     view_dispatcher_add_view(app->view_dispatcher, GennaroAIViewLoading, loading_get_view(app->loading));
     
-    // Initialize UART communication - Derek Jamison WORKING approach 
-    init_uart(app);
-    
-    // Start UART worker thread for receiving ESP32 responses
-    app->uart_thread = furi_thread_alloc_ex("GennaroAI_UART", 2048, uart_worker, app);
-    furi_thread_start(app->uart_thread);
-    
+    FURI_LOG_I(TAG, "✅ App structure allocated successfully");
     return app;
 }
 
 // ===== APP DEALLOCATION =====
 
 static void gennaro_ai_app_free(GennaroAIApp* app) {
-    furi_assert(app);
+    if(!app) return;  // Safety check
     
-    // Stop UART thread
+    FURI_LOG_I(TAG, "🔄 Starting app cleanup...");
+    
+    // Stop UART thread FIRST and SAFELY
     if(app->uart_thread) {
+        FURI_LOG_I(TAG, "Stopping UART thread...");
         furi_thread_flags_set(furi_thread_get_id(app->uart_thread), WorkerEventExiting);
         furi_thread_join(app->uart_thread);
         furi_thread_free(app->uart_thread);
+        app->uart_thread = NULL;
     }
     
-    // Deinitialize UART
+    // Deinitialize UART BEFORE freeing anything else
     deinit_uart(app);
+    
+    // Remove views from dispatcher BEFORE freeing them
+    if(app->view_dispatcher) {
+        if(app->submenu) {
+            view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewSubmenu);
+        }
+        if(app->text_box) {
+            view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewTextBox);
+        }
+        if(app->loading) {
+            view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewLoading);
+        }
+    }
+    
+    // Free views SAFELY
+    if(app->submenu) {
+        submenu_free(app->submenu);
+        app->submenu = NULL;
+    }
+    if(app->text_box) {
+        text_box_free(app->text_box);
+        app->text_box = NULL;
+    }
+    if(app->loading) {
+        loading_free(app->loading);
+        app->loading = NULL;
+    }
+    
+    // Free view dispatcher
+    if(app->view_dispatcher) {
+        view_dispatcher_free(app->view_dispatcher);
+        app->view_dispatcher = NULL;
+    }
     
     // Free communication resources
     if(app->rx_stream) {
         furi_stream_buffer_free(app->rx_stream);
+        app->rx_stream = NULL;
     }
     if(app->data_mutex) {
         furi_mutex_free(app->data_mutex);
+        app->data_mutex = NULL;
     }
     
-    // Remove views
-    view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewSubmenu);
-    view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewTextBox);
-    view_dispatcher_remove_view(app->view_dispatcher, GennaroAIViewLoading);
-    
-    // Free views
-    submenu_free(app->submenu);
-    text_box_free(app->text_box);
-    loading_free(app->loading);
-    
-    // Free view dispatcher
-    view_dispatcher_free(app->view_dispatcher);
-    
     // Free strings
-    furi_string_free(app->response_text);
-    furi_string_free(app->temp_buffer);
+    if(app->response_text) {
+        furi_string_free(app->response_text);
+        app->response_text = NULL;
+    }
+    if(app->temp_buffer) {
+        furi_string_free(app->temp_buffer);
+        app->temp_buffer = NULL;
+    }
     
     // Close notifications
-    furi_record_close(RECORD_NOTIFICATION);
+    if(app->notifications) {
+        furi_record_close(RECORD_NOTIFICATION);
+        app->notifications = NULL;
+    }
     
+    // Final cleanup
     free(app);
+    
+    FURI_LOG_I(TAG, "✅ App cleanup completed");
 }
 
 // ===== MAIN APP ENTRY POINT =====
@@ -691,37 +810,59 @@ int32_t gennaro_ai_app(void* p) {
     FURI_LOG_I(TAG, "🚀 Starting Gennaro AI v2.0 for Momentum Firmware");
     
     GennaroAIApp* app = gennaro_ai_app_alloc();
-    
     if(!app) {
-        FURI_LOG_E(TAG, "❌ Failed to allocate app");
+        FURI_LOG_E(TAG, "❌ Failed to allocate app - exiting");
         return -1;
+    }
+    
+    // Initialize UART communication AFTER all GUI is ready
+    FURI_LOG_I(TAG, "Initializing UART communication...");
+    init_uart(app);
+    
+    // Start UART worker thread ONLY if UART is initialized
+    if(app->serial_handle || true) {  // Always start thread for GPIO fallback
+        app->uart_thread = furi_thread_alloc_ex("GennaroAI_UART", 1024, uart_worker, app);
+        if(app->uart_thread) {
+            furi_thread_start(app->uart_thread);
+            FURI_LOG_I(TAG, "✅ UART worker thread started");
+        } else {
+            FURI_LOG_W(TAG, "⚠️ Failed to start UART thread - continuing without");
+        }
     }
     
     // Attach to GUI
     Gui* gui = furi_record_open(RECORD_GUI);
+    if(!gui) {
+        FURI_LOG_E(TAG, "❌ Failed to open GUI record");
+        gennaro_ai_app_free(app);
+        return -1;
+    }
+    
     view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
     
     // Set starting view
     view_dispatcher_switch_to_view(app->view_dispatcher, GennaroAIViewSubmenu);
     
-    // Welcome notification and setup
+    // Welcome notification
     notification_message(app->notifications, &sequence_display_backlight_on);
     notification_message(app->notifications, &sequence_single_vibro);
     
-    // Send initial status check to ESP32
-    furi_delay_ms(1000);  // Give ESP32 time to boot
-    send_esp32_command(app, "STATUS");
+    // Give ESP32 time to boot, then send status check
+    furi_delay_ms(2000);
+    if(app->current_state == StateIdle) {  // Only if app is ready
+        send_esp32_command(app, "STATUS");
+    }
     
-    FURI_LOG_I(TAG, "✅ App initialized, running view dispatcher - Ready for ESP32 responses!");
+    FURI_LOG_I(TAG, "✅ App initialized successfully - Ready for ESP32 responses!");
     
-    // Run view dispatcher
+    // Run view dispatcher (this blocks until app exits)
     view_dispatcher_run(app->view_dispatcher);
     
     // Cleanup
     furi_record_close(RECORD_GUI);
     gennaro_ai_app_free(app);
     
-    FURI_LOG_I(TAG, "🛑 Gennaro AI v2.0 terminated");
+    FURI_LOG_I(TAG, "🛑 Gennaro AI v2.0 terminated cleanly");
     
     return 0;
 }

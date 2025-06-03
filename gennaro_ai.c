@@ -104,6 +104,78 @@ static void init_gpio_uart(GennaroAIApp* app) {
     FURI_LOG_I(TAG, "✅ GPIO UART initialized");
 }
 
+static bool read_byte_from_esp32(uint8_t* byte) {
+    if(!byte) return false;
+    
+    // Simple GPIO bit-banging reception for 115200 baud
+    // This is a basic implementation - in practice you'd want interrupts
+    
+    // Wait for start bit (falling edge)
+    uint32_t timeout = 1000;
+    while(furi_hal_gpio_read(ESP32_RX_PIN) && timeout > 0) {
+        furi_delay_us(1);
+        timeout--;
+    }
+    
+    if(timeout == 0) return false; // No start bit detected
+    
+    // Wait half bit time to center sampling
+    furi_delay_us(4);
+    
+    // Read 8 data bits
+    uint8_t received_byte = 0;
+    for(int bit = 0; bit < 8; bit++) {
+        furi_delay_us(9); // Wait one bit time (8.68µs for 115200)
+        if(furi_hal_gpio_read(ESP32_RX_PIN)) {
+            received_byte |= (1 << bit);
+        }
+    }
+    
+    // Wait for stop bit
+    furi_delay_us(9);
+    
+    *byte = received_byte;
+    return true;
+}
+
+static void check_esp32_responses(GennaroAIApp* app) {
+    if(!app) return;
+    
+    uint8_t received_byte;
+    static uint32_t last_check = 0;
+    
+    // Throttle checks to avoid overwhelming the system
+    uint32_t now = furi_get_tick();
+    if(now - last_check < 10) return; // Check every 10ms
+    last_check = now;
+    
+    // Try to read bytes from ESP32
+    int bytes_read = 0;
+    while(bytes_read < 32 && read_byte_from_esp32(&received_byte)) { // Limit reads per cycle
+        // Add byte to line buffer
+        if(app->line_pos < LINE_BUFFER_SIZE - 1) {
+            if(received_byte == '\n' || received_byte == '\r') {
+                // End of line
+                if(app->line_pos > 0) {
+                    app->line_buffer[app->line_pos] = '\0';
+                    add_line_to_monitor(app, app->line_buffer);
+                    app->line_pos = 0;
+                }
+            } else if(received_byte >= 32 && received_byte <= 126) {
+                // Printable character
+                app->line_buffer[app->line_pos++] = received_byte;
+            }
+        } else {
+            // Buffer overflow - flush current line
+            app->line_buffer[LINE_BUFFER_SIZE - 1] = '\0';
+            add_line_to_monitor(app, app->line_buffer);
+            add_line_to_monitor(app, "[LINE TOO LONG - TRUNCATED]");
+            app->line_pos = 0;
+        }
+        bytes_read++;
+    }
+}
+
 static void send_command_to_esp32(GennaroAIApp* app, const char* command) {
     if(!command) return;
     

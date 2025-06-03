@@ -7,8 +7,10 @@ App(
         "gui",
         "notification",
     ],
-    stack_size=6 * 1024,  # 6KB per il timer + monitor
+    stack_size=3 * 1024,  # Reduced to 3KB - no timer overhead
+    order=20,
     fap_category="GPIO",
-    fap_version="2.0",
-    fap_description="AI Vision Assistant with Serial Monitor",
+    fap_author="GennaroAI",
+    fap_version="1.9",     # Safe version number
+    fap_description="AI Vision Assistant - Manual Refresh Monitor",
 )

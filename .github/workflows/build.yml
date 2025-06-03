@@ -1,0 +1,104 @@
+name: Build Gennaro AI FAP for Unleashed
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Permette trigger manuale
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git wget curl build-essential
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Clone Unleashed firmware
+      run: |
+        git clone --recursive --depth 1 https://github.com/DarkFlippers/unleashed-firmware.git
+        cd unleashed-firmware
+        git submodule update --init --recursive
+        
+    - name: Install FBT dependencies
+      run: |
+        cd unleashed-firmware
+        ./fbt
+        
+    - name: Create app directory structure
+      run: |
+        mkdir -p unleashed-firmware/applications/external/gennaro_ai
+        mkdir -p unleashed-firmware/applications/external/gennaro_ai/images
+        
+    - name: Copy application files
+      run: |
+        # Verifica che i file esistano nel repository
+        echo "=== Files in repository root ==="
+        ls -la
+        echo "=== Copying files ==="
+        cp application.fam unleashed-firmware/applications/external/gennaro_ai/
+        cp gennaro_ai.c unleashed-firmware/applications/external/gennaro_ai/
+        echo "=== Files copied successfully ==="
+        ls -la unleashed-firmware/applications/external/gennaro_ai/
+        
+    - name: Create placeholder icon
+      run: |
+        # Crea un'icona placeholder se non esiste
+        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==" | base64 -d > unleashed-firmware/applications/external/gennaro_ai/images/gennaro_ai_10px.png
+        
+    - name: Verify file structure
+      run: |
+        echo "=== File structure ==="
+        ls -la unleashed-firmware/applications/external/gennaro_ai/
+        echo "=== application.fam content ==="
+        cat unleashed-firmware/applications/external/gennaro_ai/application.fam
+        
+    - name: Build Gennaro AI FAP
+      run: |
+        cd unleashed-firmware
+        echo "=== Verifying app structure before build ==="
+        ls -la applications/external/gennaro_ai/
+        echo "=== application.fam content ==="
+        cat applications/external/gennaro_ai/application.fam
+        echo "=== Starting build ==="
+        ./fbt fap_gennaro_ai
+        
+    - name: Find and list FAP files
+      run: |
+        echo "=== Searching for FAP files ==="
+        find unleashed-firmware -name "*.fap" -type f | head -20
+        echo "=== Copying FAP file ==="
+        find unleashed-firmware -name "*gennaro_ai*.fap" -exec cp {} ./ \;
+        ls -la *.fap || echo "No FAP files found in current directory"
+        
+    - name: Upload FAP file
+      uses: actions/upload-artifact@v4
+      with:
+        name: gennaro_ai_unleashed_fap
+        path: "*.fap"
+        retention-days: 30
+        if-no-files-found: error
+        
+    - name: Upload build logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build_logs_failure
+        path: |
+          unleashed-firmware/build/
+          unleashed-firmware/.fbt/
+        retention-days: 7
+        if-no-files-found: ignore

@@ -6,14 +6,12 @@ App(
     requires=[
         "gui",
         "notification",
-        "storage",
-        "dialogs",
     ],
-    stack_size=16 * 1024,  # Increased for UART thread
+    stack_size=8 * 1024,  # Reduced from 16KB - the serial monitor doesn't need that much
     order=20,
     fap_category="GPIO",
     fap_author="GennaroAI Team",
-    fap_version="2.0",
-    fap_description="AI Vision Assistant with ESP32-CAM - Full UART Communication",
-    fap_icon="gennaro_ai_icon.png",
+    fap_version="2.1",  # Updated version
+    fap_description="AI Vision Assistant with ESP32-CAM - Serial Monitor Interface",
+    fap_icon_assets="icon.png",  # Standard icon reference
 )

@@ -7,11 +7,11 @@ App(
         "gui",
         "notification",
     ],
-    stack_size=4 * 1024,  # Further reduced to 4KB - safe for simple operations
+    stack_size=4 * 1024,
     order=20,
     fap_category="GPIO",
     fap_author="GennaroAI Team",
-    fap_version="2.1-SAFE",
+    fap_version="2.1",
     fap_description="AI Vision Assistant - Safe Serial Monitor",
     fap_icon_assets="icon.png",
 )

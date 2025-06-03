@@ -15,4 +15,5 @@ App(
     fap_author="GennaroAI Team",
     fap_version="2.0",
     fap_description="AI Vision Assistant with ESP32-CAM - Full UART Communication",
+    fap_icon="gennaro_ai_icon.png",
 )

@@ -64,14 +64,13 @@ jobs:
     - name: Create simple icon
       run: |
         echo "Creating application icon"
-        python3 << 'EOF'
-import base64
-# Simple 10x10 black square PNG
-png_data = base64.b64decode(b'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVBiVpY+xDQAgCAS/xgk6gx3AlThCJ3AER+gMduAEJsbGhISGXHI/jyQAAP//ZgZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmaH8AEMU5AK1dCd/gAAAABJRU5ErkJggg==')
-with open('icon.png', 'wb') as f:
-    f.write(png_data)
-print("Icon created successfully")
-EOF
+        python3 -c "
+        import base64
+        png_data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVBiVpY+xDQAgCAS/xgk6gx3AlThCJ3AER+gMduAEJsbGhISGXHI/jyQAAP//ZgZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmaH8AEMU5AK1dCd/gAAAABJRU5ErkJggg==')
+        with open('icon.png', 'wb') as f:
+            f.write(png_data)
+        print('Icon created successfully')
+        "
         ls -la icon.png
         file icon.png
         
@@ -164,40 +163,38 @@ EOF
     - name: Create release notes
       if: success()
       run: |
-        cat > release_notes.md << 'EOF'
-# GENNARO AI v2.1 BUILD SUCCESS
-
-## Features
-- Serial Monitor Interface
-- GPIO UART Communication
-- Real-time ESP32 Response Display
-- 6 Predefined AI Commands
-- Vision Analysis & Math Solver
-- OCR & Object Counting
-- Crash-Safe Architecture
-- Memory Overflow Protection
-
-## Hardware Requirements
-- Flipper Zero with Momentum Firmware
-- ESP32-CAM AI-Thinker
-- MAX9814 Microphone Module
-
-## Installation
-1. Download `gennaro_ai_v2.1.fap`
-2. Copy to `/ext/apps/GPIO/` on SD card
-3. Connect hardware as per documentation
-4. Run from Apps > GPIO > Gennaro AI
-
-## Safety Features
-- Buffer overflow protection
-- Stack usage minimized
-- Null pointer validation
-- Safe memory allocation
-- Crash prevention
-
-Build: $(date)
-Commit: ${{ github.sha }}
-EOF
+        echo "# GENNARO AI v2.1 BUILD SUCCESS" > release_notes.md
+        echo "" >> release_notes.md
+        echo "## Features" >> release_notes.md
+        echo "- Serial Monitor Interface" >> release_notes.md
+        echo "- GPIO UART Communication" >> release_notes.md
+        echo "- Real-time ESP32 Response Display" >> release_notes.md
+        echo "- 6 Predefined AI Commands" >> release_notes.md
+        echo "- Vision Analysis & Math Solver" >> release_notes.md
+        echo "- OCR & Object Counting" >> release_notes.md
+        echo "- Crash-Safe Architecture" >> release_notes.md
+        echo "- Memory Overflow Protection" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "## Hardware Requirements" >> release_notes.md
+        echo "- Flipper Zero with Momentum Firmware" >> release_notes.md
+        echo "- ESP32-CAM AI-Thinker" >> release_notes.md
+        echo "- MAX9814 Microphone Module" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "## Installation" >> release_notes.md
+        echo "1. Download gennaro_ai_v2.1.fap" >> release_notes.md
+        echo "2. Copy to /ext/apps/GPIO/ on SD card" >> release_notes.md
+        echo "3. Connect hardware as per documentation" >> release_notes.md
+        echo "4. Run from Apps > GPIO > Gennaro AI" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "## Safety Features" >> release_notes.md
+        echo "- Buffer overflow protection" >> release_notes.md
+        echo "- Stack usage minimized" >> release_notes.md
+        echo "- Null pointer validation" >> release_notes.md
+        echo "- Safe memory allocation" >> release_notes.md
+        echo "- Crash prevention" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "Build: $(date)" >> release_notes.md
+        echo "Commit: ${{ github.sha }}" >> release_notes.md
         
         cat release_notes.md
         

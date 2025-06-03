@@ -1,0 +1,18 @@
+App(
+    appid="gennaro_ai",
+    name="Gennaro AI",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="gennaro_ai_app",
+    requires=[
+        "gui",
+        "notification",
+    ],
+    stack_size=8 * 1024,  # Aumentato per stabilità
+    order=20,
+    fap_category="GPIO",
+    fap_icon="gennaro_ai_10px.png",  # Cambiato da fap_icon_assets
+    fap_author="GennaroAI Team",
+    fap_version=(1, 0),  # Formato tupla
+    fap_description="AI Vision Assistant with ESP32-CAM support",
+    fap_weburl="https://github.com/yourusername/gennaro-ai",  # Opzionale
+)

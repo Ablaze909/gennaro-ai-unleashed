@@ -94,11 +94,12 @@ jobs:
       run: |
         cd Momentum-Firmware
         echo "Building Gennaro AI FAP"
-        ./fbt fap_gennaro_ai 2>&1 | tee build.log || {
-          echo "BUILD FAILED - Showing build log"
-          cat build.log
-          echo "Trying fallback build"
-          ./fbt faps 2>&1 | tee fallback_build.log || echo "Fallback also failed"
+        ./fbt fap_dist 2>&1 | tee build.log || {
+          echo "fap_dist failed, trying faps"
+          ./fbt faps 2>&1 | tee fallback_build.log || {
+            echo "faps failed, trying individual build"
+            ./fbt ext_gennaro_ai 2>&1 | tee individual_build.log || echo "All build methods failed"
+          }
         }
         
     - name: Locate and verify FAP

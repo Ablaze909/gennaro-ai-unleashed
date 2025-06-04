@@ -110,8 +110,11 @@ static void esp32_cam_ai_uart_rx_callback(
     ESP32CamAI* app = (ESP32CamAI*)context;
     
     if(event == FuriHalSerialRxEventData) {
+        FURI_LOG_D(TAG, "RX callback triggered");
         // Signal worker thread that data is available
-        furi_thread_flags_set(furi_thread_get_id(app->worker_thread), (1UL << 1));
+        if(app->worker_thread) {
+            furi_thread_flags_set(furi_thread_get_id(app->worker_thread), (1UL << 1));
+        }
     }
 }
 
@@ -123,79 +126,72 @@ static int32_t esp32_cam_ai_worker(void* context) {
     FURI_LOG_I(TAG, "Worker thread started");
     
     while(1) {
-        // Wait for data available or exit signal
-        uint32_t flags = furi_thread_flags_wait((1UL << 0) | (1UL << 1), FuriFlagWaitAny, 1000);
+        // Wait for data available or exit signal (with timeout)
+        uint32_t flags = furi_thread_flags_wait((1UL << 0) | (1UL << 1), FuriFlagWaitAny, 500);
         
         if(flags & (1UL << 0)) {
             // Exit signal
+            FURI_LOG_I(TAG, "Worker exit signal received");
             break;
         }
         
         if(flags & (1UL << 1)) {
-            // Data available - read directly from serial
-            while(true) {
+            // Data available - read from serial with safety check
+            FURI_LOG_D(TAG, "Data available signal received");
+            
+            size_t read_count = 0;
+            while(read_count < 256) { // Prevent infinite loop
                 uint8_t byte = furi_hal_serial_async_rx(app->serial_handle);
-                if(byte == 0) break; // No more data
+                if(byte == 0) {
+                    // No more data
+                    break;
+                }
                 
-                FURI_LOG_D(TAG, "RX byte: 0x%02X ('%c')", byte, (byte >= 32 && byte < 127) ? byte : '.');
+                read_count++;
+                FURI_LOG_D(TAG, "RX[%d]: 0x%02X ('%c')", read_count, byte, (byte >= 32 && byte < 127) ? byte : '.');
                 
                 if(byte == '\n' || byte == '\r') {
                     if(line_pos > 0) {
                         line_buffer[line_pos] = '\0';
                         
-                        FURI_LOG_I(TAG, "Processing line: '%s'", line_buffer);
+                        FURI_LOG_I(TAG, "Complete line: '%s'", line_buffer);
                         
                         // Process complete line
                         if(strstr(line_buffer, "READY")) {
                             furi_string_set(app->response_text, "✅ ESP32-CAM Ready");
                             app->uart_connected = true;
-                            FURI_LOG_I(TAG, "ESP32-CAM Ready detected");
                         }
                         else if(strstr(line_buffer, "RECORDING")) {
                             furi_string_set(app->response_text, "🎤 Recording audio...");
                             app->ptt_active = true;
                         }
-                        else if(strstr(line_buffer, "PROCESSING")) {
-                            furi_string_set(app->response_text, "⚙️ Processing voice...");
-                        }
-                        else if(strstr(line_buffer, "FLASH:ON")) {
-                            furi_string_set(app->response_text, "💡 Flash LED ON");
-                            app->flash_status = true;
-                        }
-                        else if(strstr(line_buffer, "FLASH:OFF")) {
-                            furi_string_set(app->response_text, "🔲 Flash LED OFF");
-                            app->flash_status = false;
-                        }
                         else if(strstr(line_buffer, "OK:")) {
                             const char* response = line_buffer + 3;
                             furi_string_printf(app->response_text, "✅ %s", response);
-                            app->ptt_active = false;
                         }
                         else if(strstr(line_buffer, "ERROR:")) {
                             const char* error = line_buffer + 6;
                             furi_string_printf(app->response_text, "❌ %s", error);
-                            app->ptt_active = false;
-                        }
-                        else if(strstr(line_buffer, "VOICE_RECOGNIZED:")) {
-                            const char* voice_text = line_buffer + 17;
-                            furi_string_printf(app->response_text, "🗣️ '%s'", voice_text);
-                        }
-                        else if(strstr(line_buffer, "STATUS:")) {
-                            const char* status = line_buffer + 7;
-                            furi_string_printf(app->response_text, "ℹ️ %s", status);
                         }
                         else if(strlen(line_buffer) > 2) {
-                            // Any other meaningful response
+                            // Any other response
                             furi_string_printf(app->response_text, "📥 %s", line_buffer);
                         }
                         
                         line_pos = 0; // Reset line buffer
                     }
-                } else if(line_pos < sizeof(line_buffer) - 1) {
+                } else if(line_pos < sizeof(line_buffer) - 2) {
                     line_buffer[line_pos++] = byte;
                 }
             }
+            
+            if(read_count > 0) {
+                FURI_LOG_I(TAG, "Read %d bytes total", read_count);
+            }
         }
+        
+        // Small delay to prevent CPU hogging
+        furi_delay_ms(10);
     }
     
     FURI_LOG_I(TAG, "Worker thread stopped");
@@ -203,31 +199,38 @@ static int32_t esp32_cam_ai_worker(void* context) {
 }
 
 static bool esp32_cam_ai_uart_init(ESP32CamAI* app) {
-    FURI_LOG_I(TAG, "Initializing UART...");
+    FURI_LOG_I(TAG, "=== UART Init Start ===");
     
     app->serial_handle = furi_hal_serial_control_acquire(UART_CH);
     if(!app->serial_handle) {
         FURI_LOG_E(TAG, "Failed to acquire serial handle");
         return false;
     }
+    FURI_LOG_I(TAG, "Serial handle acquired");
     
     furi_hal_serial_init(app->serial_handle, app->baudrate);
+    FURI_LOG_I(TAG, "Serial initialized at %lu baud", app->baudrate);
     
     // Add delay for stabilization
-    furi_delay_ms(200);
+    furi_delay_ms(100);
     
     // Start worker thread first
+    FURI_LOG_I(TAG, "Starting worker thread...");
     app->worker_thread = furi_thread_alloc_ex("ESP32CamWorker", 2048, esp32_cam_ai_worker, app);
     furi_thread_start(app->worker_thread);
     
+    // Small delay for thread to start
+    furi_delay_ms(50);
+    
     // Then start async RX
+    FURI_LOG_I(TAG, "Starting async RX...");
     furi_hal_serial_async_rx_start(app->serial_handle, esp32_cam_ai_uart_rx_callback, app, false);
     
-    FURI_LOG_I(TAG, "UART initialized at %lu baud", app->baudrate);
+    FURI_LOG_I(TAG, "=== UART Init Complete ===");
     
-    // Send test command after initialization
-    furi_delay_ms(500);
-    FURI_LOG_I(TAG, "Sending initial STATUS command");
+    // Send test command after short delay
+    furi_delay_ms(200);
+    FURI_LOG_I(TAG, "Sending test STATUS command");
     esp32_cam_ai_uart_send_command(app, "STATUS");
     
     return true;

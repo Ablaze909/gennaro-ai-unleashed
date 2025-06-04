@@ -87,7 +87,7 @@ struct ESP32CamAI {
     // Data
     FuriString* response_text;
     FuriString* line_buffer;
-    FuriString* input_text;             // NUOVO
+    char input_buffer[128];             // CORRETTO: buffer char array
     bool uart_connected;
     bool ptt_active;
     bool flash_status;
@@ -486,8 +486,8 @@ static void esp32_cam_ai_scene_menu_callback(void* context, uint32_t index) {
 static void esp32_cam_ai_scene_text_input_on_enter(void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
     
-    // Reset input text
-    furi_string_reset(app->input_text);
+    // Reset input buffer
+    memset(app->input_buffer, 0, sizeof(app->input_buffer));
     
     // Setup text input
     text_input_reset(app->text_input);
@@ -502,8 +502,8 @@ static void esp32_cam_ai_scene_text_input_on_enter(void* context) {
         app->text_input,
         esp32_cam_ai_text_input_callback,
         app,
-        furi_string_get_str(app->input_text),
-        furi_string_size(app->input_text) + 1,
+        app->input_buffer,
+        sizeof(app->input_buffer),
         true // clear default text
     );
     
@@ -518,13 +518,11 @@ static bool esp32_cam_ai_scene_text_input_on_event(void* context, SceneManagerEv
         switch(event.event) {
             case ESP32CamAIEventTextInputDone:
                 // Input completed - send question
-                if(furi_string_size(app->input_text) > 0) {
-                    const char* question = furi_string_get_cstr(app->input_text);
-                    
+                if(strlen(app->input_buffer) > 0) {
                     if(app->is_vision_mode) {
-                        esp32_cam_ai_uart_send_custom_command(app, "CUSTOM_VISION:", question);
+                        esp32_cam_ai_uart_send_custom_command(app, "CUSTOM_VISION:", app->input_buffer);
                     } else {
-                        esp32_cam_ai_uart_send_custom_command(app, "CUSTOM_CHAT:", question);
+                        esp32_cam_ai_uart_send_custom_command(app, "CUSTOM_CHAT:", app->input_buffer);
                     }
                     
                     scene_manager_next_scene(app->scene_manager, ESP32CamAISceneResponse);
@@ -777,6 +775,9 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     app->response_updated = false;
     app->is_vision_mode = false;  // NUOVO
     
+    // Initialize input buffer
+    memset(app->input_buffer, 0, sizeof(app->input_buffer));
+    
     // GUI
     app->gui = furi_record_open(RECORD_GUI);
     app->view_dispatcher = view_dispatcher_alloc();
@@ -809,7 +810,6 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     // Data
     app->response_text = furi_string_alloc();
     app->line_buffer = furi_string_alloc();
-    app->input_text = furi_string_alloc_size(128);  // NUOVO: buffer per input text
     
     return app;
 }
@@ -848,7 +848,6 @@ static void esp32_cam_ai_app_free(ESP32CamAI* app) {
     // Free data
     furi_string_free(app->response_text);
     furi_string_free(app->line_buffer);
-    furi_string_free(app->input_text);  // NUOVO
     
     free(app);
 }

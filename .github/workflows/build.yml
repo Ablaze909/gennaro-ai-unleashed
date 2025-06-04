@@ -1,4 +1,4 @@
-naname: "Build ESP32-AI-Monitor FAP"
+name: "Build ESP32-AI-Monitor FAP"
 
 on:
   push:

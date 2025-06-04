@@ -83,40 +83,37 @@ jobs:
         echo ""
         echo "=== Creating corrected application.fam ==="
         cat > application.fam << 'EOF'
-App(
-    appid="gennaro_ai",
-    name="Gennaro AI",
-    apptype=FlipperAppType.EXTERNAL,
-    entry_point="gennaro_ai_app",
-    requires=[
-        "gui",
-        "notification",
-    ],
-    stack_size=8 * 1024,
-    order=20,
-    fap_category="GPIO",
-    fap_author="GennaroAI Team",
-    fap_version="1.0",
-    fap_description="AI Vision Assistant with ESP32-CAM support",
-    fap_icon="icon.png",
-)
-EOF
+        App(
+            appid="gennaro_ai",
+            name="Gennaro AI",
+            apptype=FlipperAppType.EXTERNAL,
+            entry_point="gennaro_ai_app",
+            requires=[
+                "gui",
+                "notification",
+            ],
+            stack_size=8 * 1024,
+            order=20,
+            fap_category="GPIO",
+            fap_author="GennaroAI Team",
+            fap_version="1.0",
+            fap_description="AI Vision Assistant with ESP32-CAM support",
+            fap_icon="icon.png",
+        )
+        EOF
         echo "=== Corrected application.fam ==="
         cat application.fam
         
     - name: Create a default icon file
       run: |
         cd unleashed-firmware/applications/external/gennaro_ai
-        # Create a simple 1x1 PNG as placeholder icon
         echo "Creating placeholder icon..."
         python3 -c "
-import base64
-import binascii
-# Minimal 1x1 transparent PNG
-png_data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAGA8RFrJgAAAABJRU5ErkJggg==')
-with open('icon.png', 'wb') as f:
-    f.write(png_data)
-"
+        import base64
+        png_data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAGA8RFrJgAAAABJRU5ErkJggg==')
+        with open('icon.png', 'wb') as f:
+            f.write(png_data)
+        "
         ls -la icon.png || echo "Icon creation failed"
         
     - name: Build external applications

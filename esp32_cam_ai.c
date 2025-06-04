@@ -4,13 +4,12 @@
 #include <gui/view_dispatcher.h>
 #include <gui/scene_manager.h>
 #include <gui/modules/submenu.h>
-#include <gui/modules/text_input.h>
+#include <gui/modules/text_box.h>
 #include <gui/modules/popup.h>
 #include <gui/modules/dialog_ex.h>
 #include <gui/modules/variable_item_list.h>
 #include <notification/notification_messages.h>
 #include <expansion/expansion.h>
-#include <toolbox/stream/file_stream.h>
 
 #define TAG "ESP32CamAI"
 
@@ -62,8 +61,8 @@ struct ESP32CamAI {
     
     // Views
     Submenu* submenu;
-    Widget* widget_response;
-    Widget* widget_ptt;
+    TextBox* text_box_response;
+    Popup* popup_ptt;
     VariableItemList* variable_item_list;
     
     // UART
@@ -87,8 +86,7 @@ struct ESP32CamAI {
 // Function declarations
 static void esp32_cam_ai_scene_start_callback(void* context, uint32_t index);
 static void esp32_cam_ai_scene_menu_callback(void* context, uint32_t index);
-static uint32_t esp32_cam_ai_navigation_exit_callback(void* context);
-static uint32_t esp32_cam_ai_navigation_previous_callback(void* context);
+static bool esp32_cam_ai_navigation_exit_callback(void* context);
 
 // UART Functions
 static void esp32_cam_ai_uart_send_command(ESP32CamAI* app, const char* command) {
@@ -108,10 +106,13 @@ static void esp32_cam_ai_uart_rx_callback(
     
     if(event == FuriHalSerialRxEventData) {
         uint8_t data[64];
-        size_t ret = furi_hal_serial_rx(app->serial_handle, data, sizeof(data));
-        if(ret > 0) {
-            furi_stream_buffer_send(app->rx_stream, data, ret, 0);
-        }
+        size_t ret = 0;
+        do {
+            ret = furi_hal_serial_async_rx(app->serial_handle, data, sizeof(data));
+            if(ret > 0) {
+                furi_stream_buffer_send(app->rx_stream, data, ret, 0);
+            }
+        } while(ret > 0);
     }
 }
 
@@ -172,7 +173,8 @@ static int32_t esp32_cam_ai_worker(void* context) {
             FURI_LOG_I(TAG, "Received: %s", str_data);
         }
         
-        if(furi_thread_flags_get() & FuriThreadFlagExit) {
+        uint32_t flags = furi_thread_flags_wait(FuriThreadFlagExit, FuriFlagWaitAny, 0);
+        if(flags & FuriThreadFlagExit) {
             break;
         }
     }
@@ -188,7 +190,6 @@ static bool esp32_cam_ai_uart_init(ESP32CamAI* app) {
     }
     
     furi_hal_serial_init(app->serial_handle, app->baudrate);
-    furi_hal_serial_set_br(app->serial_handle, app->baudrate);
     furi_hal_serial_async_rx_start(app->serial_handle, esp32_cam_ai_uart_rx_callback, app, false);
     
     app->rx_stream = furi_stream_buffer_alloc(1024, 1);
@@ -228,7 +229,13 @@ static void esp32_cam_ai_scene_start_on_enter(void* context) {
     submenu_reset(app->submenu);
     submenu_set_header(app->submenu, "ESP32-CAM AI Vision");
     
-    submenu_add_item(app->submenu, "Connect & Start", ESP32CamAIEventStartPressed, esp32_cam_ai_scene_start_callback);
+    submenu_add_item(
+        app->submenu, 
+        "Connect & Start", 
+        ESP32CamAIEventStartPressed, 
+        esp32_cam_ai_scene_start_callback, 
+        app
+    );
     
     view_dispatcher_switch_to_view(app->view_dispatcher, ESP32CamAIViewSubmenu);
 }
@@ -272,22 +279,22 @@ static void esp32_cam_ai_scene_menu_on_enter(void* context) {
     submenu_set_header(app->submenu, "ESP32-CAM Commands");
     
     // AI Vision Commands
-    submenu_add_item(app->submenu, "📷 Vision Analysis", ESP32CamAIEventVisionPressed, esp32_cam_ai_scene_menu_callback);
-    submenu_add_item(app->submenu, "🧮 Math Solver", ESP32CamAIEventMathPressed, esp32_cam_ai_scene_menu_callback);
-    submenu_add_item(app->submenu, "📝 Text OCR", ESP32CamAIEventOCRPressed, esp32_cam_ai_scene_menu_callback);
-    submenu_add_item(app->submenu, "🔢 Count Objects", ESP32CamAIEventCountPressed, esp32_cam_ai_scene_menu_callback);
+    submenu_add_item(app->submenu, "📷 Vision Analysis", ESP32CamAIEventVisionPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "🧮 Math Solver", ESP32CamAIEventMathPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "📝 Text OCR", ESP32CamAIEventOCRPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "🔢 Count Objects", ESP32CamAIEventCountPressed, esp32_cam_ai_scene_menu_callback, app);
     
     // Voice Command
-    submenu_add_item(app->submenu, "🎤 Voice Command (PTT)", ESP32CamAIEventPTTPressed, esp32_cam_ai_scene_menu_callback);
+    submenu_add_item(app->submenu, "🎤 Voice Command (PTT)", ESP32CamAIEventPTTPressed, esp32_cam_ai_scene_menu_callback, app);
     
     // Flash Controls
-    submenu_add_item(app->submenu, "💡 Flash ON", ESP32CamAIEventFlashOnPressed, esp32_cam_ai_scene_menu_callback);
-    submenu_add_item(app->submenu, "🔲 Flash OFF", ESP32CamAIEventFlashOffPressed, esp32_cam_ai_scene_menu_callback);
-    submenu_add_item(app->submenu, "🔄 Flash Toggle", ESP32CamAIEventFlashTogglePressed, esp32_cam_ai_scene_menu_callback);
+    submenu_add_item(app->submenu, "💡 Flash ON", ESP32CamAIEventFlashOnPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "🔲 Flash OFF", ESP32CamAIEventFlashOffPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "🔄 Flash Toggle", ESP32CamAIEventFlashTogglePressed, esp32_cam_ai_scene_menu_callback, app);
     
     // System
-    submenu_add_item(app->submenu, "ℹ️ System Status", ESP32CamAIEventStatusPressed, esp32_cam_ai_scene_menu_callback);
-    submenu_add_item(app->submenu, "⚙️ Settings", ESP32CamAIEventSettingsPressed, esp32_cam_ai_scene_menu_callback);
+    submenu_add_item(app->submenu, "ℹ️ System Status", ESP32CamAIEventStatusPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "⚙️ Settings", ESP32CamAIEventSettingsPressed, esp32_cam_ai_scene_menu_callback, app);
     
     view_dispatcher_switch_to_view(app->view_dispatcher, ESP32CamAIViewSubmenu);
 }
@@ -382,13 +389,9 @@ static void esp32_cam_ai_scene_menu_callback(void* context, uint32_t index) {
 static void esp32_cam_ai_scene_response_on_enter(void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
     
-    widget_reset(app->widget_response);
-    
-    widget_add_text_scroll_element(
-        app->widget_response,
-        0, 0, 128, 64,
-        furi_string_get_cstr(app->response_text)
-    );
+    text_box_reset(app->text_box_response);
+    text_box_set_text(app->text_box_response, furi_string_get_cstr(app->response_text));
+    text_box_set_focus(app->text_box_response, TextBoxFocusStart);
     
     view_dispatcher_switch_to_view(app->view_dispatcher, ESP32CamAIViewResponse);
 }
@@ -409,22 +412,23 @@ static bool esp32_cam_ai_scene_response_on_event(void* context, SceneManagerEven
 
 static void esp32_cam_ai_scene_response_on_exit(void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
-    widget_reset(app->widget_response);
+    text_box_reset(app->text_box_response);
 }
 
 // Scene: PTT (Push-to-Talk)
 static void esp32_cam_ai_scene_ptt_on_enter(void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
     
-    widget_reset(app->widget_ptt);
+    popup_reset(app->popup_ptt);
     
     if(app->ptt_active) {
-        widget_add_string_element(app->widget_ptt, 64, 20, AlignCenter, AlignCenter, FontPrimary, "🎤 RECORDING");
-        widget_add_string_element(app->widget_ptt, 64, 35, AlignCenter, AlignCenter, FontSecondary, "Release OK to stop");
+        popup_set_icon(app->popup_ptt, 32, 5, &I_DFU_128x50);
+        popup_set_header(app->popup_ptt, "🎤 RECORDING", 64, 20, AlignCenter, AlignCenter);
+        popup_set_text(app->popup_ptt, "Release OK to stop", 64, 35, AlignCenter, AlignCenter);
     } else {
-        widget_add_string_element(app->widget_ptt, 64, 20, AlignCenter, AlignCenter, FontPrimary, "🎤 Push-to-Talk");
-        widget_add_string_element(app->widget_ptt, 64, 35, AlignCenter, AlignCenter, FontSecondary, "Hold OK to record");
-        widget_add_string_element(app->widget_ptt, 64, 50, AlignCenter, AlignCenter, FontSecondary, "Back to cancel");
+        popup_set_icon(app->popup_ptt, 32, 5, &I_DFU_128x50);
+        popup_set_header(app->popup_ptt, "🎤 Push-to-Talk", 64, 20, AlignCenter, AlignCenter);
+        popup_set_text(app->popup_ptt, "Hold OK to record\nBack to cancel", 64, 35, AlignCenter, AlignCenter);
     }
     
     view_dispatcher_switch_to_view(app->view_dispatcher, ESP32CamAIViewPTT);
@@ -450,7 +454,7 @@ static bool esp32_cam_ai_scene_ptt_on_event(void* context, SceneManagerEvent eve
 
 static void esp32_cam_ai_scene_ptt_on_exit(void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
-    widget_reset(app->widget_ptt);
+    popup_reset(app->popup_ptt);
 }
 
 // Scene: Settings
@@ -519,43 +523,24 @@ void (*const esp32_cam_ai_scene_on_exit_handlers[])(void*) = {
 };
 
 // Scene manager handlers
-static void esp32_cam_ai_scene_manager_set_scene_state(void* context, uint32_t scene_id, uint32_t state) {
-    furi_assert(context);
-    SceneManagerEvent event = {
-        .type = SceneManagerEventTypeSetState,
-        .event = state,
-    };
-    esp32_cam_ai_scene_on_event_handlers[scene_id](context, event);
-}
-
-static void esp32_cam_ai_scene_manager_get_scene_state(void* context, uint32_t scene_id) {
-    furi_assert(context);
-    SceneManagerEvent event = {
-        .type = SceneManagerEventTypeGetState,
-        .event = 0,
-    };
-    esp32_cam_ai_scene_on_event_handlers[scene_id](context, event);
-}
-
 static const SceneManagerHandlers esp32_cam_ai_scene_manager_handlers = {
     .on_enter_handlers = esp32_cam_ai_scene_on_enter_handlers,
     .on_event_handlers = esp32_cam_ai_scene_on_event_handlers,
     .on_exit_handlers = esp32_cam_ai_scene_on_exit_handlers,
     .scene_num = ESP32CamAISceneCount,
-    .set_scene_state = esp32_cam_ai_scene_manager_set_scene_state,
-    .get_scene_state = esp32_cam_ai_scene_manager_get_scene_state,
 };
 
 // Navigation callbacks
-static uint32_t esp32_cam_ai_navigation_exit_callback(void* context) {
+static bool esp32_cam_ai_navigation_exit_callback(void* context) {
     UNUSED(context);
-    return VIEW_NONE;
+    return false;
 }
 
-static uint32_t esp32_cam_ai_navigation_previous_callback(void* context) {
+// Custom event callback
+static bool esp32_cam_ai_custom_event_callback(void* context, uint32_t event) {
     furi_assert(context);
     ESP32CamAI* app = (ESP32CamAI*)context;
-    return scene_manager_handle_back_event(app->scene_manager);
+    return scene_manager_handle_custom_event(app->scene_manager, event);
 }
 
 // Input callbacks for PTT
@@ -563,7 +548,7 @@ static bool esp32_cam_ai_input_callback(InputEvent* event, void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
     bool consumed = false;
     
-    if(scene_manager_get_scene_state(app->scene_manager) == ESP32CamAIScenePTT) {
+    if(scene_manager_get_scene_state(app->scene_manager, ESP32CamAIScenePTT) == ESP32CamAIScenePTT) {
         if(event->key == InputKeyOk) {
             if(event->type == InputTypePress) {
                 // Start PTT
@@ -599,11 +584,10 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     app->gui = furi_record_open(RECORD_GUI);
     app->view_dispatcher = view_dispatcher_alloc();
     app->scene_manager = scene_manager_alloc(&esp32_cam_ai_scene_manager_handlers, app);
-    view_dispatcher_enable_queue(app->view_dispatcher);
+    
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
     view_dispatcher_set_navigation_event_callback(app->view_dispatcher, esp32_cam_ai_navigation_exit_callback);
-    view_dispatcher_set_custom_event_callback(app->view_dispatcher, scene_manager_handle_custom_event);
-    view_dispatcher_set_scene_manager(app->view_dispatcher, app->scene_manager);
+    view_dispatcher_set_custom_event_callback(app->view_dispatcher, esp32_cam_ai_custom_event_callback);
     
     // Input handling for PTT
     view_dispatcher_set_input_callback(app->view_dispatcher, esp32_cam_ai_input_callback, app);
@@ -612,11 +596,11 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     app->submenu = submenu_alloc();
     view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewSubmenu, submenu_get_view(app->submenu));
     
-    app->widget_response = widget_alloc();
-    view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewResponse, widget_get_view(app->widget_response));
+    app->text_box_response = text_box_alloc();
+    view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewResponse, text_box_get_view(app->text_box_response));
     
-    app->widget_ptt = widget_alloc();
-    view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewPTT, widget_get_view(app->widget_ptt));
+    app->popup_ptt = popup_alloc();
+    view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewPTT, popup_get_view(app->popup_ptt));
     
     app->variable_item_list = variable_item_list_alloc();
     view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewSettings, variable_item_list_get_view(app->variable_item_list));
@@ -641,10 +625,10 @@ static void esp32_cam_ai_app_free(ESP32CamAI* app) {
     submenu_free(app->submenu);
     
     view_dispatcher_remove_view(app->view_dispatcher, ESP32CamAIViewResponse);
-    widget_free(app->widget_response);
+    text_box_free(app->text_box_response);
     
     view_dispatcher_remove_view(app->view_dispatcher, ESP32CamAIViewPTT);
-    widget_free(app->widget_ptt);
+    popup_free(app->popup_ptt);
     
     view_dispatcher_remove_view(app->view_dispatcher, ESP32CamAIViewSettings);
     variable_item_list_free(app->variable_item_list);

@@ -8,8 +8,10 @@ App(
         "notification",
     ],
     stack_size=2 * 1024,
+    order=10,
     fap_category="GPIO",
-    fap_author="GennaroAI",
+    fap_author="GennaroAI Team",
     fap_version="1.0",
-    fap_description="ESP32-CAM AI Assistant",
+    fap_description="ESP32-CAM AI Assistant with UART communication",
+    fap_icon_assets="icon.png",
 )

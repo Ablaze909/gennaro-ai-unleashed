@@ -91,26 +91,61 @@ jobs:
         cd flipperzero-firmware-unleashed
         echo "Building with Unleashed firmware"
         
+        # Check if our app source exists and is valid
+        echo "=== Verifying source files ==="
+        if [ ! -f "applications/external/gennaro_ai/gennaro_ai.c" ]; then
+          echo "❌ Source file missing!"
+          exit 1
+        fi
+        
+        if [ ! -f "applications/external/gennaro_ai/application.fam" ]; then
+          echo "❌ Manifest file missing!"
+          exit 1
+        fi
+        
+        echo "✅ Source files present"
+        wc -l applications/external/gennaro_ai/gennaro_ai.c
+        echo "Checking for syntax errors..."
+        
         # Try multiple build methods in sequence
+        BUILD_SUCCESS=false
+        
         echo "=== Method 1: Direct app build ==="
-        ./fbt fap_gennaro_ai 2>&1 | tee build_method1.log || {
-          echo "Method 1 failed"
-          
+        if ./fbt fap_gennaro_ai 2>&1 | tee build_method1.log; then
+          if [ -f build/*/dist/faps/gennaro_ai.fap ]; then
+            echo "✅ Method 1 SUCCESS - FAP found"
+            BUILD_SUCCESS=true
+          fi
+        fi
+        
+        if [ "$BUILD_SUCCESS" = false ]; then
           echo "=== Method 2: All external apps ==="
-          ./fbt faps 2>&1 | tee build_method2.log || {
-            echo "Method 2 failed"
-            
-            echo "=== Method 3: Application build ==="
-            ./fbt applications 2>&1 | tee build_method3.log || {
-              echo "Method 3 failed"
-              
-              echo "=== Method 4: Forced build ==="
-              ./fbt -j1 fap_gennaro_ai 2>&1 | tee build_method4.log || {
-                echo "All build methods failed"
-              }
-            }
-          }
-        }
+          if ./fbt faps 2>&1 | tee build_method2.log; then
+            if find build -name "*gennaro*.fap" -type f | grep -q .; then
+              echo "✅ Method 2 SUCCESS - FAP found"
+              BUILD_SUCCESS=true
+            fi
+          fi
+        fi
+        
+        if [ "$BUILD_SUCCESS" = false ]; then
+          echo "=== Method 3: Clean and rebuild ==="
+          ./fbt clean
+          if ./fbt fap_gennaro_ai 2>&1 | tee build_method3.log; then
+            if find build -name "*gennaro*.fap" -type f | grep -q .; then
+              echo "✅ Method 3 SUCCESS - FAP found"
+              BUILD_SUCCESS=true
+            fi
+          fi
+        fi
+        
+        if [ "$BUILD_SUCCESS" = false ]; then
+          echo "❌ All build methods failed"
+          echo "Checking for any compilation errors..."
+          grep -i "error" build_method*.log || echo "No obvious errors found"
+        else
+          echo "✅ Build completed successfully"
+        fi
         
         echo "=== Build completed, searching for results ==="
         

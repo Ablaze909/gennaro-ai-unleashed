@@ -105,14 +105,10 @@ static void esp32_cam_ai_uart_rx_callback(
     ESP32CamAI* app = (ESP32CamAI*)context;
     
     if(event == FuriHalSerialRxEventData) {
-        uint8_t data[64];
-        size_t ret = 0;
-        do {
-            ret = furi_hal_serial_async_rx(app->serial_handle, data, sizeof(data));
-            if(ret > 0) {
-                furi_stream_buffer_send(app->rx_stream, data, ret, 0);
-            }
-        } while(ret > 0);
+        uint8_t data;
+        // Read one byte at a time
+        data = furi_hal_serial_async_rx(app->serial_handle);
+        furi_stream_buffer_send(app->rx_stream, &data, 1, 0);
     }
 }
 
@@ -173,8 +169,8 @@ static int32_t esp32_cam_ai_worker(void* context) {
             FURI_LOG_I(TAG, "Received: %s", str_data);
         }
         
-        uint32_t flags = furi_thread_flags_wait(FuriThreadFlagExit, FuriFlagWaitAny, 0);
-        if(flags & FuriThreadFlagExit) {
+        // Check if thread should exit
+        if(furi_thread_flags_get() & FuriFlagExit) {
             break;
         }
     }
@@ -203,7 +199,7 @@ static bool esp32_cam_ai_uart_init(ESP32CamAI* app) {
 
 static void esp32_cam_ai_uart_deinit(ESP32CamAI* app) {
     if(app->worker_thread) {
-        furi_thread_flags_set(furi_thread_get_id(app->worker_thread), FuriThreadFlagExit);
+        furi_thread_flags_set(furi_thread_get_id(app->worker_thread), FuriFlagExit);
         furi_thread_join(app->worker_thread);
         furi_thread_free(app->worker_thread);
         app->worker_thread = NULL;
@@ -422,11 +418,9 @@ static void esp32_cam_ai_scene_ptt_on_enter(void* context) {
     popup_reset(app->popup_ptt);
     
     if(app->ptt_active) {
-        popup_set_icon(app->popup_ptt, 32, 5, &I_DFU_128x50);
         popup_set_header(app->popup_ptt, "🎤 RECORDING", 64, 20, AlignCenter, AlignCenter);
         popup_set_text(app->popup_ptt, "Release OK to stop", 64, 35, AlignCenter, AlignCenter);
     } else {
-        popup_set_icon(app->popup_ptt, 32, 5, &I_DFU_128x50);
         popup_set_header(app->popup_ptt, "🎤 Push-to-Talk", 64, 20, AlignCenter, AlignCenter);
         popup_set_text(app->popup_ptt, "Hold OK to record\nBack to cancel", 64, 35, AlignCenter, AlignCenter);
     }
@@ -548,7 +542,9 @@ static bool esp32_cam_ai_input_callback(InputEvent* event, void* context) {
     ESP32CamAI* app = (ESP32CamAI*)context;
     bool consumed = false;
     
-    if(scene_manager_get_scene_state(app->scene_manager, ESP32CamAIScenePTT) == ESP32CamAIScenePTT) {
+    // Check if we're in PTT scene
+    uint32_t current_scene = scene_manager_get_scene_state(app->scene_manager, scene_manager_get_scene_id(app->scene_manager));
+    if(current_scene == ESP32CamAIScenePTT) {
         if(event->key == InputKeyOk) {
             if(event->type == InputTypePress) {
                 // Start PTT
@@ -588,9 +584,6 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
     view_dispatcher_set_navigation_event_callback(app->view_dispatcher, esp32_cam_ai_navigation_exit_callback);
     view_dispatcher_set_custom_event_callback(app->view_dispatcher, esp32_cam_ai_custom_event_callback);
-    
-    // Input handling for PTT
-    view_dispatcher_set_input_callback(app->view_dispatcher, esp32_cam_ai_input_callback, app);
     
     // Views
     app->submenu = submenu_alloc();

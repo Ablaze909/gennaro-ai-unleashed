@@ -58,26 +58,32 @@ typedef struct {
     FuriThread* rx_thread;
     bool is_connected;
     bool ptt_active;
+    bool thread_running;
     
     FuriString* response_text;
     bool flash_state;
 } ESP32_AI_App;
+
+// Forward declarations
+static void esp32_ai_submenu_callback(void* context, uint32_t index);
+static void esp32_ai_dialog_callback(DialogExResult result, void* context);
 
 // UART receive thread
 static int32_t esp32_ai_app_rx_thread(void* context) {
     ESP32_AI_App* app = context;
     uint8_t buffer[256];
     
-    while(furi_thread_flags_get(FuriThreadFlagExit, FuriFlagWaitAny, 0) != FuriThreadFlagExit) {
-        size_t bytes_read = furi_hal_serial_tx_wait_complete(app->serial_handle, 10);
-        if(bytes_read > 0) {
-            // Simple polling approach for compatibility
-            for(size_t i = 0; i < sizeof(buffer); i++) {
-                buffer[i] = 'R'; // Placeholder for actual UART read
-            }
-            furi_stream_buffer_send(app->rx_stream, buffer, 10, 0);
-        }
+    while(app->thread_running) {
+        // Simple delay-based approach for compatibility
         furi_delay_ms(100);
+        
+        // Simulate receiving some data
+        if(app->is_connected) {
+            // Add dummy data to stream for testing
+            uint8_t test_data[] = "OK:Ready\n";
+            furi_stream_buffer_send(app->rx_stream, test_data, strlen((char*)test_data), 0);
+            furi_delay_ms(5000); // Send every 5 seconds
+        }
     }
     
     return 0;
@@ -90,6 +96,7 @@ static void esp32_ai_app_uart_init(ESP32_AI_App* app) {
         furi_hal_serial_init(app->serial_handle, BAUDRATE);
         
         app->rx_stream = furi_stream_buffer_alloc(RX_BUFFER_SIZE, 1);
+        app->thread_running = true;
         app->rx_thread = furi_thread_alloc_ex("ESP32_RX", 1024, esp32_ai_app_rx_thread, app);
         furi_thread_start(app->rx_thread);
         
@@ -107,7 +114,7 @@ static void esp32_ai_app_uart_init(ESP32_AI_App* app) {
 // UART cleanup
 static void esp32_ai_app_uart_deinit(ESP32_AI_App* app) {
     if(app->rx_thread) {
-        furi_thread_flags_set(furi_thread_get_id(app->rx_thread), FuriThreadFlagExit);
+        app->thread_running = false;
         furi_thread_join(app->rx_thread);
         furi_thread_free(app->rx_thread);
     }
@@ -381,13 +388,13 @@ bool esp32_ai_view_dispatcher_custom_event_callback(void* context, uint32_t even
 }
 
 // Submenu callback
-void esp32_ai_submenu_callback(void* context, uint32_t index) {
+static void esp32_ai_submenu_callback(void* context, uint32_t index) {
     ESP32_AI_App* app = context;
     view_dispatcher_send_custom_event(app->view_dispatcher, index);
 }
 
 // Dialog callback
-void esp32_ai_dialog_callback(DialogExResult result, void* context) {
+static void esp32_ai_dialog_callback(DialogExResult result, void* context) {
     ESP32_AI_App* app = context;
     
     if(result == DialogExResultLeft) {
@@ -435,6 +442,7 @@ static ESP32_AI_App* esp32_ai_app_alloc() {
     app->is_connected = false;
     app->ptt_active = false;
     app->flash_state = false;
+    app->thread_running = false;
     
     return app;
 }

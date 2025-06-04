@@ -8,6 +8,7 @@
 #include <gui/modules/popup.h>
 #include <gui/modules/dialog_ex.h>
 #include <gui/modules/variable_item_list.h>
+#include <gui/modules/text_input.h>
 #include <notification/notification_messages.h>
 #include <expansion/expansion.h>
 
@@ -24,6 +25,9 @@ typedef enum {
     ESP32CamAISceneResponse,
     ESP32CamAIScenePTT,
     ESP32CamAISceneSettings,
+    ESP32CamAISceneCustomVision,     // NUOVO
+    ESP32CamAISceneCustomChat,       // NUOVO
+    ESP32CamAISceneTextInput,        // NUOVO
     ESP32CamAISceneCount,
 } ESP32CamAIScene;
 
@@ -33,6 +37,7 @@ typedef enum {
     ESP32CamAIViewResponse,
     ESP32CamAIViewPTT,
     ESP32CamAIViewSettings,
+    ESP32CamAIViewTextInput,         // NUOVO
 } ESP32CamAIView;
 
 // Application events
@@ -48,8 +53,11 @@ typedef enum {
     ESP32CamAIEventFlashTogglePressed,
     ESP32CamAIEventStatusPressed,
     ESP32CamAIEventSettingsPressed,
+    ESP32CamAIEventCustomVisionPressed,  // NUOVO
+    ESP32CamAIEventCustomChatPressed,    // NUOVO
+    ESP32CamAIEventTextInputDone,        // NUOVO
     ESP32CamAIEventBack,
-    ESP32CamAIEventUpdateResponse, // NEW: Event for updating response
+    ESP32CamAIEventUpdateResponse,
 } ESP32CamAIEvent;
 
 // Main application structure
@@ -65,6 +73,7 @@ struct ESP32CamAI {
     TextBox* text_box_response;
     Popup* popup_ptt;
     VariableItemList* variable_item_list;
+    TextInput* text_input;              // NUOVO
     
     // UART
     FuriHalSerialHandle* serial_handle;
@@ -78,10 +87,12 @@ struct ESP32CamAI {
     // Data
     FuriString* response_text;
     FuriString* line_buffer;
+    FuriString* input_text;             // NUOVO
     bool uart_connected;
     bool ptt_active;
     bool flash_status;
     bool response_updated;
+    bool is_vision_mode;                // NUOVO: distingue vision/chat
     
     // Navigation state
     uint32_t current_scene;
@@ -93,6 +104,7 @@ struct ESP32CamAI {
 // Function declarations
 static void esp32_cam_ai_scene_start_callback(void* context, uint32_t index);
 static void esp32_cam_ai_scene_menu_callback(void* context, uint32_t index);
+static void esp32_cam_ai_text_input_callback(void* context);  // NUOVO
 static bool esp32_cam_ai_navigation_exit_callback(void* context);
 
 // UART Functions
@@ -105,6 +117,26 @@ static void esp32_cam_ai_uart_send_command(ESP32CamAI* app, const char* command)
         // Show command sent immediately
         furi_string_printf(app->response_text, "📤 Sent: %s\nWaiting for response...", command);
         app->response_updated = true;
+    }
+}
+
+// NUOVO: Invio comando custom con domanda
+static void esp32_cam_ai_uart_send_custom_command(ESP32CamAI* app, const char* prefix, const char* question) {
+    if(app->serial_handle) {
+        // Costruisci comando: "CUSTOM_VISION:domanda" o "CUSTOM_CHAT:domanda"
+        FuriString* full_command = furi_string_alloc();
+        furi_string_printf(full_command, "%s%s", prefix, question);
+        
+        const char* cmd_str = furi_string_get_cstr(full_command);
+        furi_hal_serial_tx(app->serial_handle, (const uint8_t*)cmd_str, strlen(cmd_str));
+        furi_hal_serial_tx(app->serial_handle, (const uint8_t*)"\n", 1);
+        
+        FURI_LOG_I(TAG, "Sent custom command: %s", cmd_str);
+        
+        furi_string_printf(app->response_text, "📤 Question: %s\nProcessing...", question);
+        app->response_updated = true;
+        
+        furi_string_free(full_command);
     }
 }
 
@@ -334,6 +366,10 @@ static void esp32_cam_ai_scene_menu_on_enter(void* context) {
     submenu_add_item(app->submenu, "📝 Text OCR", ESP32CamAIEventOCRPressed, esp32_cam_ai_scene_menu_callback, app);
     submenu_add_item(app->submenu, "🔢 Count Objects", ESP32CamAIEventCountPressed, esp32_cam_ai_scene_menu_callback, app);
     
+    // NUOVO: Custom Questions
+    submenu_add_item(app->submenu, "❓ Custom Vision", ESP32CamAIEventCustomVisionPressed, esp32_cam_ai_scene_menu_callback, app);
+    submenu_add_item(app->submenu, "💬 Chat Question", ESP32CamAIEventCustomChatPressed, esp32_cam_ai_scene_menu_callback, app);
+    
     // Voice Command
     submenu_add_item(app->submenu, "🎤 Voice Command (PTT)", ESP32CamAIEventPTTPressed, esp32_cam_ai_scene_menu_callback, app);
     
@@ -376,6 +412,19 @@ static bool esp32_cam_ai_scene_menu_on_event(void* context, SceneManagerEvent ev
             case ESP32CamAIEventCountPressed:
                 esp32_cam_ai_uart_send_command(app, "COUNT");
                 scene_manager_next_scene(app->scene_manager, ESP32CamAISceneResponse);
+                consumed = true;
+                break;
+                
+            // NUOVO: Custom Questions
+            case ESP32CamAIEventCustomVisionPressed:
+                app->is_vision_mode = true;
+                scene_manager_next_scene(app->scene_manager, ESP32CamAISceneTextInput);
+                consumed = true;
+                break;
+                
+            case ESP32CamAIEventCustomChatPressed:
+                app->is_vision_mode = false;
+                scene_manager_next_scene(app->scene_manager, ESP32CamAISceneTextInput);
                 consumed = true;
                 break;
                 
@@ -431,6 +480,81 @@ static void esp32_cam_ai_scene_menu_on_exit(void* context) {
 static void esp32_cam_ai_scene_menu_callback(void* context, uint32_t index) {
     ESP32CamAI* app = (ESP32CamAI*)context;
     scene_manager_handle_custom_event(app->scene_manager, index);
+}
+
+// NUOVO: Scene Text Input
+static void esp32_cam_ai_scene_text_input_on_enter(void* context) {
+    ESP32CamAI* app = (ESP32CamAI*)context;
+    
+    // Reset input text
+    furi_string_reset(app->input_text);
+    
+    // Setup text input
+    text_input_reset(app->text_input);
+    
+    if(app->is_vision_mode) {
+        text_input_set_header_text(app->text_input, "Custom Vision Question:");
+    } else {
+        text_input_set_header_text(app->text_input, "Chat Question:");
+    }
+    
+    text_input_set_result_callback(
+        app->text_input,
+        esp32_cam_ai_text_input_callback,
+        app,
+        furi_string_get_str(app->input_text),
+        furi_string_size(app->input_text) + 1,
+        true // clear default text
+    );
+    
+    view_dispatcher_switch_to_view(app->view_dispatcher, ESP32CamAIViewTextInput);
+}
+
+static bool esp32_cam_ai_scene_text_input_on_event(void* context, SceneManagerEvent event) {
+    ESP32CamAI* app = (ESP32CamAI*)context;
+    bool consumed = false;
+    
+    if(event.type == SceneManagerEventTypeCustom) {
+        switch(event.event) {
+            case ESP32CamAIEventTextInputDone:
+                // Input completed - send question
+                if(furi_string_size(app->input_text) > 0) {
+                    const char* question = furi_string_get_cstr(app->input_text);
+                    
+                    if(app->is_vision_mode) {
+                        esp32_cam_ai_uart_send_custom_command(app, "CUSTOM_VISION:", question);
+                    } else {
+                        esp32_cam_ai_uart_send_custom_command(app, "CUSTOM_CHAT:", question);
+                    }
+                    
+                    scene_manager_next_scene(app->scene_manager, ESP32CamAISceneResponse);
+                } else {
+                    // Empty input - go back to menu
+                    scene_manager_previous_scene(app->scene_manager);
+                }
+                consumed = true;
+                break;
+        }
+    }
+    
+    // Handle back button press
+    if(event.type == SceneManagerEventTypeBack) {
+        scene_manager_previous_scene(app->scene_manager);
+        consumed = true;
+    }
+    
+    return consumed;
+}
+
+static void esp32_cam_ai_scene_text_input_on_exit(void* context) {
+    ESP32CamAI* app = (ESP32CamAI*)context;
+    text_input_reset(app->text_input);
+}
+
+// NUOVO: Text Input Callback
+static void esp32_cam_ai_text_input_callback(void* context) {
+    ESP32CamAI* app = (ESP32CamAI*)context;
+    scene_manager_handle_custom_event(app->scene_manager, ESP32CamAIEventTextInputDone);
 }
 
 // Scene: Response Display
@@ -583,6 +707,9 @@ void (*const esp32_cam_ai_scene_on_enter_handlers[])(void*) = {
     esp32_cam_ai_scene_response_on_enter,
     esp32_cam_ai_scene_ptt_on_enter,
     esp32_cam_ai_scene_settings_on_enter,
+    esp32_cam_ai_scene_text_input_on_enter,    // NUOVO
+    esp32_cam_ai_scene_text_input_on_enter,    // Custom Chat usa stesso input
+    esp32_cam_ai_scene_text_input_on_enter,    // Text Input handler
 };
 
 bool (*const esp32_cam_ai_scene_on_event_handlers[])(void*, SceneManagerEvent) = {
@@ -591,6 +718,9 @@ bool (*const esp32_cam_ai_scene_on_event_handlers[])(void*, SceneManagerEvent) =
     esp32_cam_ai_scene_response_on_event,
     esp32_cam_ai_scene_ptt_on_event,
     esp32_cam_ai_scene_settings_on_event,
+    esp32_cam_ai_scene_text_input_on_event,    // NUOVO
+    esp32_cam_ai_scene_text_input_on_event,    // Custom Chat
+    esp32_cam_ai_scene_text_input_on_event,    // Text Input
 };
 
 void (*const esp32_cam_ai_scene_on_exit_handlers[])(void*) = {
@@ -599,6 +729,9 @@ void (*const esp32_cam_ai_scene_on_exit_handlers[])(void*) = {
     esp32_cam_ai_scene_response_on_exit,
     esp32_cam_ai_scene_ptt_on_exit,
     esp32_cam_ai_scene_settings_on_exit,
+    esp32_cam_ai_scene_text_input_on_exit,     // NUOVO
+    esp32_cam_ai_scene_text_input_on_exit,     // Custom Chat
+    esp32_cam_ai_scene_text_input_on_exit,     // Text Input
 };
 
 // Scene manager handlers
@@ -642,6 +775,7 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     app->ptt_active = false;
     app->flash_status = false;
     app->response_updated = false;
+    app->is_vision_mode = false;  // NUOVO
     
     // GUI
     app->gui = furi_record_open(RECORD_GUI);
@@ -665,12 +799,17 @@ static ESP32CamAI* esp32_cam_ai_app_alloc() {
     app->variable_item_list = variable_item_list_alloc();
     view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewSettings, variable_item_list_get_view(app->variable_item_list));
     
+    // NUOVO: Text Input
+    app->text_input = text_input_alloc();
+    view_dispatcher_add_view(app->view_dispatcher, ESP32CamAIViewTextInput, text_input_get_view(app->text_input));
+    
     // Notifications
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
     
     // Data
     app->response_text = furi_string_alloc();
     app->line_buffer = furi_string_alloc();
+    app->input_text = furi_string_alloc_size(128);  // NUOVO: buffer per input text
     
     return app;
 }
@@ -694,6 +833,10 @@ static void esp32_cam_ai_app_free(ESP32CamAI* app) {
     view_dispatcher_remove_view(app->view_dispatcher, ESP32CamAIViewSettings);
     variable_item_list_free(app->variable_item_list);
     
+    // NUOVO: Free text input
+    view_dispatcher_remove_view(app->view_dispatcher, ESP32CamAIViewTextInput);
+    text_input_free(app->text_input);
+    
     // Free GUI
     scene_manager_free(app->scene_manager);
     view_dispatcher_free(app->view_dispatcher);
@@ -705,6 +848,7 @@ static void esp32_cam_ai_app_free(ESP32CamAI* app) {
     // Free data
     furi_string_free(app->response_text);
     furi_string_free(app->line_buffer);
+    furi_string_free(app->input_text);  // NUOVO
     
     free(app);
 }

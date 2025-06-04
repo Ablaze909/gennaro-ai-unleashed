@@ -144,27 +144,45 @@ jobs:
         GENNARO_FAP=$(find . -name "*gennaro*.fap" -type f 2>/dev/null | head -1)
         if [ -n "$GENNARO_FAP" ]; then
           echo "✅ Found Gennaro FAP: $GENNARO_FAP"
-          cp "$GENNARO_FAP" ../gennaro_ai_unleashed.fap
-          ls -lah ../gennaro_ai_unleashed.fap
-          file ../gennaro_ai_unleashed.fap
-          echo "SUCCESS: Gennaro FAP copied"
-        else
+          
+          # Verify FAP file is valid
+          FAP_SIZE=$(stat -c%s "$GENNARO_FAP" 2>/dev/null || echo "0")
+          echo "FAP file size: $FAP_SIZE bytes"
+          
+          if [ "$FAP_SIZE" -gt 1000 ]; then
+            echo "✅ FAP file size looks good (>1KB)"
+            file "$GENNARO_FAP"
+            hexdump -C "$GENNARO_FAP" | head -5
+            
+            cp "$GENNARO_FAP" ../gennaro_ai.fap
+            ls -lah ../gennaro_ai.fap
+            echo "SUCCESS: Valid Gennaro FAP copied"
+          else
+            echo "❌ FAP file too small ($FAP_SIZE bytes) - likely corrupt"
+            echo "File contents:"
+            cat "$GENNARO_FAP" | head -10
+            echo "SKIPPING: FAP appears corrupt"
+            GENNARO_FAP=""  # Force fallback
+          fi
+        fi
+        
+        if [ -z "$GENNARO_FAP" ]; then
           echo "❌ No Gennaro FAP found"
           
           # Priority 2: Any .fap in build directory
           ANY_FAP=$(find ./build -name "*.fap" -type f 2>/dev/null | head -1)
           if [ -n "$ANY_FAP" ]; then
             echo "⚠️ Copying any available FAP as fallback: $ANY_FAP"
-            cp "$ANY_FAP" ../gennaro_ai_unleashed.fap
-            ls -lah ../gennaro_ai_unleashed.fap
-            echo "FALLBACK: Generic FAP copied"
+            cp "$ANY_FAP" ../gennaro_ai.fap
+            ls -lah ../gennaro_ai.fap
+            echo "FALLBACK: Generic FAP copied with correct name"
           else
             echo "❌ NO FAP FILES FOUND AT ALL"
             
             # Create dummy file so upload doesn't fail
             echo "Creating dummy FAP for debugging..."
-            echo "Build failed - no FAP generated" > ../gennaro_ai_unleashed.fap
-            echo "DUMMY: Placeholder file created"
+            echo "Build failed - no FAP generated" > ../gennaro_ai.fap
+            echo "DUMMY: Placeholder file created with correct name"
           fi
         fi
         
@@ -176,7 +194,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: gennaro_ai_unleashed
-        path: "gennaro_ai_unleashed.fap"
+        path: "gennaro_ai.fap"
         retention-days: 30
         if-no-files-found: warn
         

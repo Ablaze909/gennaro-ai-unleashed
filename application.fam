@@ -7,7 +7,7 @@ App(
         "gui",
         "notification",
     ],
-    stack_size=8 * 1024,  # 8KB needed for UART timer + buffers
+    stack_size=4 * 1024,  # Reduced to 4KB - safer for Unleashed
     order=20,
     fap_category="GPIO",
     fap_author="GennaroAI",

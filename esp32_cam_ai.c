@@ -412,6 +412,12 @@ static bool esp32_cam_ai_scene_menu_on_event(void* context, SceneManagerEvent ev
         }
     }
     
+    // Handle back button press - go to start scene
+    if(event.type == SceneManagerEventTypeBack) {
+        scene_manager_previous_scene(app->scene_manager);
+        consumed = true;
+    }
+    
     return consumed;
 }
 
@@ -454,6 +460,12 @@ static bool esp32_cam_ai_scene_response_on_event(void* context, SceneManagerEven
                 consumed = true;
                 break;
         }
+    }
+    
+    // Handle back button press
+    if(event.type == SceneManagerEventTypeBack) {
+        scene_manager_previous_scene(app->scene_manager);
+        consumed = true;
     }
     
     return consumed;
@@ -547,6 +559,12 @@ static bool esp32_cam_ai_scene_settings_on_event(void* context, SceneManagerEven
         }
     }
     
+    // Handle back button press
+    if(event.type == SceneManagerEventTypeBack) {
+        scene_manager_previous_scene(app->scene_manager);
+        consumed = true;
+    }
+    
     return consumed;
 }
 
@@ -590,8 +608,20 @@ static const SceneManagerHandlers esp32_cam_ai_scene_manager_handlers = {
 
 // Navigation callbacks
 static bool esp32_cam_ai_navigation_exit_callback(void* context) {
-    UNUSED(context);
-    return false;
+    furi_assert(context);
+    ESP32CamAI* app = (ESP32CamAI*)context;
+    
+    // Handle back navigation based on current scene
+    uint32_t current_scene = scene_manager_get_scene_id(app->scene_manager);
+    
+    if(current_scene == ESP32CamAISceneStart) {
+        // Only exit from start scene
+        return false; // Allow exit
+    } else {
+        // For all other scenes, go back to previous scene
+        scene_manager_previous_scene(app->scene_manager);
+        return true; // Consume event, don't exit
+    }
 }
 
 // Custom event callback

@@ -1,129 +1,150 @@
-name: Build Gennaro AI FAP for Unleashed
+name: Build ESP32-AI-Monitor FAP
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [ main ]
+  release:
+    types: [published]
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        firmware: [unleashed, official]
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y git wget curl build-essential python3 python3-pip
-        
-    - name: Setup Python
+      
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         
-    - name: Clone Unleashed firmware
+    - name: Install dependencies
       run: |
-        git clone --recursive --depth 1 https://github.com/DarkFlippers/unleashed-firmware.git
-        cd unleashed-firmware
-        git submodule update --init --recursive
+        python -m pip install --upgrade pip
+        pip install ufbt
         
-    - name: Setup FBT environment
+    - name: Setup uFBT for Unleashed
+      if: matrix.firmware == 'unleashed'
       run: |
-        cd unleashed-firmware
-        chmod +x ./fbt
-        python3 -m pip install --upgrade pip
-        python3 -m pip install scons
+        ufbt update --channel=dev --url=https://github.com/DarkFlippers/unleashed-firmware
         
-    - name: Test FBT basic functionality
+    - name: Setup uFBT for Official
+      if: matrix.firmware == 'official'
       run: |
-        cd unleashed-firmware
-        echo "Testing FBT"
-        ./fbt --help || echo "FBT help failed"
-        ./fbt --version || echo "FBT version check failed"
-        
-    - name: Create app directory
-      run: |
-        mkdir -p unleashed-firmware/applications/external/gennaro_ai
-        ls -la unleashed-firmware/applications/external/
-        
-    - name: Copy application files
-      run: |
-        cp application.fam unleashed-firmware/applications/external/gennaro_ai/
-        cp gennaro_ai.c unleashed-firmware/applications/external/gennaro_ai/
-        ls -la unleashed-firmware/applications/external/gennaro_ai/
-        
-    - name: Create icon file
-      run: |
-        cd unleashed-firmware/applications/external/gennaro_ai
-        python3 -c "import base64; open('icon.png', 'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAGA8RFrJgAAAABJRU5ErkJggg=='))"
-        ls -la icon.png
-        
-    - name: Fix application.fam
-      run: |
-        cd unleashed-firmware/applications/external/gennaro_ai
-        cat > application.fam << 'EOF'
-        App(
-            appid="gennaro_ai",
-            name="Gennaro AI",
-            apptype=FlipperAppType.EXTERNAL,
-            entry_point="gennaro_ai_app",
-            requires=[
-                "gui",
-                "notification",
-            ],
-            stack_size=8 * 1024,
-            order=20,
-            fap_category="GPIO",
-            fap_author="GennaroAI Team",
-            fap_version="1.0",
-            fap_description="AI Vision Assistant with ESP32-CAM support",
-            fap_icon="icon.png",
-        )
-        EOF
+        ufbt update --channel=release
         
     - name: Build FAP
       run: |
-        cd unleashed-firmware
-        ./fbt fap_gennaro_ai
+        ufbt build
         
-    - name: Alternative build
-      if: failure()
+    - name: Get build info
+      id: build_info
       run: |
-        cd unleashed-firmware
-        ./fbt faps
+        echo "firmware_version=$(ufbt -s APPVER)" >> $GITHUB_OUTPUT
+        echo "api_version=$(ufbt -s APIVERSION)" >> $GITHUB_OUTPUT
+        echo "build_date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
         
-    - name: Find FAP files
+    - name: Prepare artifacts
       run: |
-        cd unleashed-firmware
-        find . -name "gennaro_ai.fap" -type f
-        find . -name "*.fap" -type f | head -10
+        mkdir -p artifacts
+        cp dist/*.fap artifacts/
+        cp README.md artifacts/
         
-    - name: Copy FAP
-      run: |
-        cd unleashed-firmware
-        find . -name "gennaro_ai.fap" -type f -exec cp {} ../gennaro_ai.fap \;
-        cd ..
-        ls -la *.fap || echo "No FAP files found"
+        # Rinomina con versione firmware
+        cd artifacts
+        for file in *.fap; do
+          base_name=$(basename "$file" .fap)
+          mv "$file" "${base_name}_${{ matrix.firmware }}_${{ steps.build_info.outputs.build_date }}.fap"
+        done
         
-    - name: Upload FAP
+    - name: Upload FAP artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: gennaro_ai_unleashed_fap
-        path: "*.fap"
+        name: esp32-ai-monitor-${{ matrix.firmware }}
+        path: artifacts/
         retention-days: 30
-        if-no-files-found: warn
         
-    - name: Upload debug logs
-      if: always()
+    - name: Create release assets
+      if: github.event_name == 'release'
+      run: |
+        cd artifacts
+        zip -r ../esp32-ai-monitor-${{ matrix.firmware }}.zip .
+        
+    - name: Upload to release
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: esp32-ai-monitor-${{ matrix.firmware }}.zip
+        asset_name: esp32-ai-monitor-${{ matrix.firmware }}.zip
+        asset_content_type: application/zip
+
+  test-compatibility:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: esp32-ai-monitor-*
+        merge-multiple: true
+        
+    - name: Test FAP files
+      run: |
+        echo "🔍 Testing compiled FAP files..."
+        for fap in *.fap; do
+          echo "Testing $fap..."
+          file "$fap"
+          size=$(stat -c%s "$fap")
+          echo "Size: $size bytes"
+          
+          # Verifica che sia un ELF valido
+          if file "$fap" | grep -q "ELF 32-bit LSB executable, ARM"; then
+            echo "✅ $fap is valid"
+          else
+            echo "❌ $fap is invalid"
+            exit 1
+          fi
+          
+          # Verifica dimensione ragionevole (< 2MB)
+          if [ "$size" -lt 2097152 ]; then
+            echo "✅ $fap size OK"
+          else
+            echo "❌ $fap too large"
+            exit 1
+          fi
+        done
+        
+    - name: Generate build report
+      run: |
+        echo "# 📊 Build Report" > build_report.md
+        echo "" >> build_report.md
+        echo "| Firmware | File | Size | Status |" >> build_report.md
+        echo "|----------|------|------|--------|" >> build_report.md
+        
+        for fap in *.fap; do
+          size=$(stat -c%s "$fap")
+          size_kb=$((size / 1024))
+          echo "| $(echo $fap | cut -d'_' -f4) | $fap | ${size_kb}KB | ✅ Valid |" >> build_report.md
+        done
+        
+        cat build_report.md
+        
+    - name: Upload build report
       uses: actions/upload-artifact@v4
       with:
-        name: unleashed_build_debug
-        path: unleashed-firmware/build/
-        retention-days: 7
-        if-no-files-found: ignore
+        name: build-report
+        path: build_report.md

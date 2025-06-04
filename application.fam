@@ -7,10 +7,11 @@ App(
         "gui",
         "notification",
     ],
-    stack_size=3 * 1024,  # Reduced to 3KB - no timer overhead
+    stack_size=8 * 1024,  # 8KB needed for UART timer + buffers
     order=20,
     fap_category="GPIO",
     fap_author="GennaroAI",
-    fap_version="1.9",     # Safe version number
-    fap_description="AI Vision Assistant - Manual Refresh Monitor",
+    fap_version="2.0",     # Real UART version
+    fap_description="AI Vision Assistant - Real UART Communication",
+    fap_icon_assets="icon.png",
 )

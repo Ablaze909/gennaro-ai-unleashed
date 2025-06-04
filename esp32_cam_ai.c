@@ -170,7 +170,7 @@ static int32_t esp32_cam_ai_worker(void* context) {
         }
         
         // Check if thread should exit
-        if(furi_thread_flags_get() & FuriFlagExit) {
+        if(furi_thread_flags_get() & (1UL << 0)) {
             break;
         }
     }
@@ -199,7 +199,7 @@ static bool esp32_cam_ai_uart_init(ESP32CamAI* app) {
 
 static void esp32_cam_ai_uart_deinit(ESP32CamAI* app) {
     if(app->worker_thread) {
-        furi_thread_flags_set(furi_thread_get_id(app->worker_thread), FuriFlagExit);
+        furi_thread_flags_set(furi_thread_get_id(app->worker_thread), (1UL << 0));
         furi_thread_join(app->worker_thread);
         furi_thread_free(app->worker_thread);
         app->worker_thread = NULL;
@@ -443,6 +443,17 @@ static bool esp32_cam_ai_scene_ptt_on_event(void* context, SceneManagerEvent eve
         }
     }
     
+    // Handle PTT input events within scene
+    if(event.type == SceneManagerEventTypeBack) {
+        // Back button pressed
+        if(app->ptt_active) {
+            esp32_cam_ai_uart_send_command(app, "PTT_STOP");
+            app->ptt_active = false;
+        }
+        scene_manager_previous_scene(app->scene_manager);
+        consumed = true;
+    }
+    
     return consumed;
 }
 
@@ -535,35 +546,6 @@ static bool esp32_cam_ai_custom_event_callback(void* context, uint32_t event) {
     furi_assert(context);
     ESP32CamAI* app = (ESP32CamAI*)context;
     return scene_manager_handle_custom_event(app->scene_manager, event);
-}
-
-// Input callbacks for PTT
-static bool esp32_cam_ai_input_callback(InputEvent* event, void* context) {
-    ESP32CamAI* app = (ESP32CamAI*)context;
-    bool consumed = false;
-    
-    // Check if we're in PTT scene
-    uint32_t current_scene = scene_manager_get_scene_state(app->scene_manager, scene_manager_get_scene_id(app->scene_manager));
-    if(current_scene == ESP32CamAIScenePTT) {
-        if(event->key == InputKeyOk) {
-            if(event->type == InputTypePress) {
-                // Start PTT
-                esp32_cam_ai_uart_send_command(app, "PTT_START");
-                app->ptt_active = true;
-                esp32_cam_ai_scene_ptt_on_enter(app); // Refresh display
-                consumed = true;
-            } else if(event->type == InputTypeRelease) {
-                // Stop PTT
-                esp32_cam_ai_uart_send_command(app, "PTT_STOP");
-                app->ptt_active = false;
-                furi_string_set(app->response_text, "🎤 Processing voice...");
-                scene_manager_next_scene(app->scene_manager, ESP32CamAISceneResponse);
-                consumed = true;
-            }
-        }
-    }
-    
-    return consumed;
 }
 
 // App allocation and initialization

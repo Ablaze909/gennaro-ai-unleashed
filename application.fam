@@ -7,11 +7,11 @@ App(
         "gui",
         "notification",
     ],
-    stack_size=4 * 1024,  # Reduced to 4KB - safer for Unleashed
+    stack_size=4 * 1024,  # Same as working uart_terminal
     order=20,
     fap_category="GPIO",
     fap_author="GennaroAI",
-    fap_version="2.0",     # Real UART version
-    fap_description="AI Vision Assistant - Real UART Communication",
+    fap_version="1.0",     # Stable integrated version
+    fap_description="ESP32-CAM AI Assistant with proven UART terminal",
     fap_icon_assets="icon.png",
 )

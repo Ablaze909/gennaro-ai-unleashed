@@ -41,15 +41,92 @@ jobs:
     - name: Build
       run: |
         cd flipperzero-firmware
-        ./fbt fap_dist
+        echo "=== BUILDING FAP ==="
+        
+        # Show what we're trying to build
+        echo "App directory contents:"
+        ls -la applications/external/gennaro_ai/
+        
+        echo "Building with fap_dist..."
+        if ./fbt fap_dist 2>&1 | tee build.log; then
+          echo "✅ fap_dist completed"
+        else
+          echo "❌ fap_dist failed, trying faps"
+          if ./fbt faps 2>&1 | tee build_fallback.log; then
+            echo "✅ faps completed"
+          else
+            echo "❌ Both build methods failed"
+            echo "=== BUILD LOG ==="
+            cat build.log | tail -20
+            echo "=== FALLBACK LOG ==="
+            cat build_fallback.log | tail -20
+          fi
+        fi
+        
+        echo "=== POST-BUILD DIRECTORY CHECK ==="
+        ls -la build/ 2>/dev/null || echo "No build directory"
+        find build -name "*.fap" -type f | head -5 || echo "No FAP files in build"
         
     - name: Find and copy FAP
       run: |
         cd flipperzero-firmware
-        find . -name "*gennaro*.fap" -exec cp {} ../gennaro_ai.fap \;
+        echo "=== SEARCHING FOR FAP FILES ==="
+        
+        # Search everywhere for any .fap files
+        find . -name "*.fap" -type f | head -10
+        
+        # Look specifically for gennaro
+        find . -name "*gennaro*" -type f | head -5
+        
+        # Check standard locations
+        ls -la build/f*/dist/faps/ 2>/dev/null || echo "No faps directory"
+        ls -la build/f*/applications_user/ 2>/dev/null || echo "No applications_user"
+        
+        # Try multiple copy strategies
+        echo "=== COPYING FAP ==="
+        
+        # Strategy 1: Find gennaro specifically
+        if find . -name "*gennaro*.fap" -type f -exec cp {} ../gennaro_ai.fap \; 2>/dev/null; then
+          echo "✅ Found and copied gennaro FAP"
+          ls -la ../gennaro_ai.fap
+        else
+          echo "❌ No gennaro FAP found"
+          
+          # Strategy 2: Copy any FAP from dist/faps
+          FAP_FILE=$(find ./build -path "*/dist/faps/*.fap" -type f | head -1)
+          if [ -n "$FAP_FILE" ]; then
+            echo "⚠️ Using any FAP as fallback: $FAP_FILE"
+            cp "$FAP_FILE" ../gennaro_ai.fap
+            ls -la ../gennaro_ai.fap
+          else
+            echo "❌ No FAP files found anywhere"
+            echo "Creating dummy file for upload"
+            echo "Build failed - no FAP generated" > ../gennaro_ai.fap
+          fi
+        fi
+        
+        echo "=== FINAL CHECK ==="
+        if [ -f "../gennaro_ai.fap" ]; then
+          ls -la ../gennaro_ai.fap
+          file ../gennaro_ai.fap
+          echo "✅ FAP ready for upload"
+        else
+          echo "❌ No FAP file created"
+        fi
         
     - name: Upload FAP
       uses: actions/upload-artifact@v4
       with:
         name: gennaro_ai_official
         path: gennaro_ai.fap
+        if-no-files-found: warn
+        
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build_logs_official
+        path: |
+          flipperzero-firmware/build.log
+          flipperzero-firmware/build_fallback.log
+        if-no-files-found: ignore

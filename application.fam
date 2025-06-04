@@ -8,7 +8,5 @@ App(
     fap_description="AI Vision system with ESP32-CAM module. Features: Voice commands, Camera AI analysis, Math solver, OCR text reading, Object counting, Flash LED control. Connect via GPIO13/14.",
     fap_author="Gennaro AI",
     fap_version="1.0",
-    fap_icon="esp32_cam_ai.png",
-    fap_libs=["assets"],
     requires=["gui", "expansion"]
 )

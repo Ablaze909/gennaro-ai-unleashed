@@ -1,8 +1,10 @@
-name: Build Gennaro AI for Unleashed Firmware
+name: Build Gennaro AI FAP for Unleashed
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -10,12 +12,20 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
-    - uses: actions/checkout@v4
-      
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git wget curl build-essential python3
+        sudo apt-get install -y git wget curl build-essential python3 python3-pip
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
         
     - name: Clone Unleashed firmware
       run: |
@@ -23,101 +33,179 @@ jobs:
         cd unleashed-firmware
         git submodule update --init --recursive
         
-    - name: Create icon
-      run: |
-        python3 -c "
-        import base64
-        data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVBiVpY+xDQAgCAS/xgk6gx3AlThCJ3AER+gMduAEJsbGhISGXHI/jyQAAP//ZgZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmaH8AEMU5AK1dCd/gAAAABJRU5ErkJggg==')
-        open('icon.png', 'wb').write(data)
-        "
-        
-    - name: Setup app in applications_user (Unleashed standard)
-      run: |
-        echo "=== UNLEASHED FIRMWARE - CORRECT SETUP ==="
-        echo "Creating app in applications_user/ (Unleashed standard path)"
-        
-        # Create the correct directory structure for Unleashed
-        mkdir -p unleashed-firmware/applications_user/gennaro_ai
-        
-        # Copy files to correct Unleashed location
-        cp gennaro_ai.c unleashed-firmware/applications_user/gennaro_ai/
-        cp application.fam unleashed-firmware/applications_user/gennaro_ai/
-        cp icon.png unleashed-firmware/applications_user/gennaro_ai/
-        
-        echo "=== VERIFICATION ==="
-        echo "App directory structure:"
-        ls -la unleashed-firmware/applications_user/gennaro_ai/
-        
-        echo "Application manifest:"
-        cat unleashed-firmware/applications_user/gennaro_ai/application.fam
-        
-        echo "Source file size:"
-        wc -l unleashed-firmware/applications_user/gennaro_ai/gennaro_ai.c
-        
-    - name: Build with Unleashed FBT
+    - name: Setup FBT environment
       run: |
         cd unleashed-firmware
-        echo "=== BUILDING WITH UNLEASHED FBT ==="
+        chmod +x ./fbt
+        # Install Python dependencies
+        python3 -m pip install --upgrade pip
+        python3 -m pip install scons
         
-        # Use the official Unleashed build command for external apps
-        echo "Building gennaro_ai with fap_gennaro_ai command..."
-        ./fbt fap_gennaro_ai 2>&1 | tee build_output.log
+    - name: Test FBT basic functionality
+      run: |
+        cd unleashed-firmware
+        echo "=== Testing FBT ==="
+        ./fbt --help || echo "FBT help failed"
+        echo "=== FBT version ==="
+        ./fbt --version || echo "FBT version check failed"
         
-        echo "=== BUILD OUTPUT ==="
-        cat build_output.log | tail -20
+    - name: Create proper app directory structure
+      run: |
+        echo "=== Creating application directory ==="
+        mkdir -p unleashed-firmware/applications/external/gennaro_ai
+        echo "=== Directory created ==="
+        ls -la unleashed-firmware/applications/external/
         
-    - name: Locate FAP file
+    - name: Copy application files with verification
+      run: |
+        echo "=== Current repository files ==="
+        ls -la
+        echo ""
+        echo "=== Copying application.fam ==="
+        cp application.fam unleashed-firmware/applications/external/gennaro_ai/
+        echo "=== Copying gennaro_ai.c ==="
+        cp gennaro_ai.c unleashed-firmware/applications/external/gennaro_ai/
+        echo ""
+        echo "=== Verifying copied files ==="
+        ls -la unleashed-firmware/applications/external/gennaro_ai/
+        echo ""
+        echo "=== Checking application.fam content ==="
+        cat unleashed-firmware/applications/external/gennaro_ai/application.fam
+        echo ""
+        echo "=== Checking first 50 lines of gennaro_ai.c ==="
+        head -50 unleashed-firmware/applications/external/gennaro_ai/gennaro_ai.c
+        
+    - name: Fix application.fam format
+      run: |
+        cd unleashed-firmware/applications/external/gennaro_ai
+        echo "=== Original application.fam ==="
+        cat application.fam
+        echo ""
+        echo "=== Creating corrected application.fam ==="
+        cat > application.fam << 'EOF'
+App(
+    appid="gennaro_ai",
+    name="Gennaro AI",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="gennaro_ai_app",
+    requires=[
+        "gui",
+        "notification",
+    ],
+    stack_size=8 * 1024,
+    order=20,
+    fap_category="GPIO",
+    fap_author="GennaroAI Team",
+    fap_version="1.0",
+    fap_description="AI Vision Assistant with ESP32-CAM support",
+    fap_icon="icon.png",
+)
+EOF
+        echo "=== Corrected application.fam ==="
+        cat application.fam
+        
+    - name: Create a default icon file
+      run: |
+        cd unleashed-firmware/applications/external/gennaro_ai
+        # Create a simple 1x1 PNG as placeholder icon
+        echo "Creating placeholder icon..."
+        python3 -c "
+import base64
+import binascii
+# Minimal 1x1 transparent PNG
+png_data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAGA8RFrJgAAAABJRU5ErkJggg==')
+with open('icon.png', 'wb') as f:
+    f.write(png_data)
+"
+        ls -la icon.png || echo "Icon creation failed"
+        
+    - name: Build external applications
+      run: |
+        cd unleashed-firmware
+        echo "=== Building all external FAPs ==="
+        ./fbt fap_gennaro_ai
+        
+    - name: Alternative build method if first fails
+      if: failure()
+      run: |
+        cd unleashed-firmware
+        echo "=== First build failed, trying alternative method ==="
+        ./fbt faps
+        
+    - name: Search for generated FAP files
       run: |
         cd unleashed-firmware
         echo "=== SEARCHING FOR GENERATED FAP ==="
-        
-        # Search for our specific FAP
         echo "Looking for gennaro_ai.fap..."
-        find . -name "gennaro_ai.fap" -type f 2>/dev/null | head -5
-        find . -name "*gennaro*.fap" -type f 2>/dev/null | head -5
-        
-        # Check build directories
+        find . -name "gennaro_ai.fap" -type f -exec ls -la {} \; || echo "No gennaro_ai.fap found"
+        echo ""
+        echo "Looking for any FAP files..."
+        find . -name "*.fap" -type f -exec ls -la {} \; | head -20 || echo "No FAP files found"
+        echo ""
         echo "Checking build directories:"
+        ls -la build/ 2>/dev/null || echo "No build directory"
         ls -la build/*/dist/ 2>/dev/null || echo "No dist directory"
-        ls -la build/*/applications_user/ 2>/dev/null || echo "No applications_user in build"
+        ls -la build/*/dist/faps/ 2>/dev/null || echo "No faps directory"
+        ls -la applications/external/gennaro_ai/ 2>/dev/null || echo "No external app directory"
         
-        # Find and copy the FAP
-        FAP_FILE=$(find . -name "*gennaro*.fap" -type f 2>/dev/null | head -1)
+    - name: Copy FAP file if found
+      run: |
+        cd unleashed-firmware
+        echo "=== COLLECTING FAP FILES ==="
+        # Find any FAP files and copy them
+        find . -name "gennaro_ai.fap" -type f -exec cp {} ../gennaro_ai.fap \; || echo "Specific FAP not found"
+        find . -name "*.fap" -type f | head -1 | xargs -I {} cp {} ../found.fap || echo "No FAP files found"
         
-        if [ -n "$FAP_FILE" ] && [ -f "$FAP_FILE" ]; then
-          echo "✅ SUCCESS: Found FAP at $FAP_FILE"
-          cp "$FAP_FILE" ../gennaro_ai_unleashed.fap
-          
-          # Verify the copied file
-          ls -la ../gennaro_ai_unleashed.fap
-          file ../gennaro_ai_unleashed.fap
-          
-          echo "✅ FAP ready for deployment"
-        else
-          echo "❌ ERROR: No FAP file generated"
-          echo "Creating debug file with build log..."
-          
-          # Create debug file with build information
-          echo "=== GENNARO AI BUILD FAILED ===" > ../gennaro_ai_unleashed.fap
-          echo "Date: $(date)" >> ../gennaro_ai_unleashed.fap
-          echo "Check build logs in artifacts" >> ../gennaro_ai_unleashed.fap
-          echo "" >> ../gennaro_ai_unleashed.fap
-          echo "Build output:" >> ../gennaro_ai_unleashed.fap
-          cat build_output.log | tail -50 >> ../gennaro_ai_unleashed.fap
-        fi
+        # Go back to root and check what we have
+        cd ..
+        echo "=== Files in root directory ==="
+        ls -la *.fap 2>/dev/null || echo "No FAP files copied to root"
         
-    - name: Upload FAP artifact
+    - name: Upload FAP file
       uses: actions/upload-artifact@v4
       with:
-        name: gennaro_ai_unleashed_final
-        path: gennaro_ai_unleashed.fap
+        name: gennaro_ai_unleashed_fap
+        path: "*.fap"
         retention-days: 30
+        if-no-files-found: warn
         
-    - name: Upload build logs
+    - name: Debug: Upload build logs
+      if: always()
+      run: |
+        cd unleashed-firmware
+        echo "=== Creating debug package ==="
+        mkdir -p ../debug_logs
+        
+        # Copy build logs
+        cp -r build/ ../debug_logs/ 2>/dev/null || echo "No build directory to copy"
+        
+        # Copy FBT logs
+        cp -r .fbt/ ../debug_logs/ 2>/dev/null || echo "No .fbt directory to copy"
+        
+        # Copy our application files
+        cp -r applications/external/gennaro_ai/ ../debug_logs/ 2>/dev/null || echo "No app files to copy"
+        
+        # Create build summary
+        echo "=== BUILD SUMMARY ===" > ../debug_logs/build_summary.txt
+        echo "Date: $(date)" >> ../debug_logs/build_summary.txt
+        echo "PWD: $(pwd)" >> ../debug_logs/build_summary.txt
+        echo "FBT version:" >> ../debug_logs/build_summary.txt
+        ./fbt --version >> ../debug_logs/build_summary.txt 2>&1 || echo "FBT version failed" >> ../debug_logs/build_summary.txt
+        echo "" >> ../debug_logs/build_summary.txt
+        echo "Directory structure:" >> ../debug_logs/build_summary.txt
+        find applications/external/ -type f >> ../debug_logs/build_summary.txt 2>&1 || echo "No external apps" >> ../debug_logs/build_summary.txt
+        echo "" >> ../debug_logs/build_summary.txt
+        echo "Build directory contents:" >> ../debug_logs/build_summary.txt
+        find build/ -name "*.fap" >> ../debug_logs/build_summary.txt 2>&1 || echo "No FAP files in build" >> ../debug_logs/build_summary.txt
+        
+        cd ..
+        ls -la debug_logs/
+        
+    - name: Upload debug logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: unleashed_build_logs
-        path: unleashed-firmware/build_output.log
+        name: unleashed_build_debug
+        path: debug_logs/
         retention-days: 7
         if-no-files-found: ignore

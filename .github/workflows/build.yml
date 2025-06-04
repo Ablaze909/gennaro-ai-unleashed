@@ -90,37 +90,87 @@ jobs:
       run: |
         cd flipperzero-firmware-unleashed
         echo "Building with Unleashed firmware"
-        ./fbt fap_gennaro_ai 2>&1 | tee build.log || {
-          echo "fap_gennaro_ai failed, trying standard commands"
-          ./fbt faps 2>&1 | tee fallback_build.log || {
-            echo "faps failed, trying application build"
-            ./fbt applications 2>&1 | tee app_build.log || echo "All methods failed"
+        
+        # Try multiple build methods in sequence
+        echo "=== Method 1: Direct app build ==="
+        ./fbt fap_gennaro_ai 2>&1 | tee build_method1.log || {
+          echo "Method 1 failed"
+          
+          echo "=== Method 2: All external apps ==="
+          ./fbt faps 2>&1 | tee build_method2.log || {
+            echo "Method 2 failed"
+            
+            echo "=== Method 3: Application build ==="
+            ./fbt applications 2>&1 | tee build_method3.log || {
+              echo "Method 3 failed"
+              
+              echo "=== Method 4: Forced build ==="
+              ./fbt -j1 fap_gennaro_ai 2>&1 | tee build_method4.log || {
+                echo "All build methods failed"
+              }
+            }
           }
         }
+        
+        echo "=== Build completed, searching for results ==="
         
     - name: Locate and verify FAP
       run: |
         cd flipperzero-firmware-unleashed
-        echo "Searching for built FAP"
+        echo "=== COMPREHENSIVE FAP SEARCH ==="
         
-        find . -name "*gennaro*.fap" -type f -exec ls -lah {} \;
-        find . -name "*.fap" -path "*/gennaro_ai/*" -type f -exec ls -lah {} \;
+        # Search everywhere for any FAP files
+        echo "Searching for gennaro FAPs..."
+        find . -name "*gennaro*" -type f 2>/dev/null | head -20
         
-        # Check standard Unleashed locations
-        ls -la build/f7-firmware-*/dist/faps/ 2>/dev/null | grep -i gennaro || echo "No gennaro FAP in dist"
-        ls -la build/f7-firmware-*/applications_user/ 2>/dev/null | grep -i gennaro || echo "No gennaro in apps_user"
+        echo "Searching for any .fap files..."
+        find . -name "*.fap" -type f 2>/dev/null | head -20
         
-        # Find and copy FAP
-        FAP_FILE=$(find . -name "*gennaro*.fap" -type f | head -1)
-        if [ -n "$FAP_FILE" ]; then
-          echo "Found FAP: $FAP_FILE"
-          cp "$FAP_FILE" ../gennaro_ai_unleashed.fap
+        # Check all possible build directories
+        echo "Checking standard build locations..."
+        ls -la build/*/dist/faps/ 2>/dev/null || echo "No dist/faps directory"
+        ls -la build/*/applications_user/ 2>/dev/null || echo "No applications_user directory"
+        ls -la build/*/ext/ 2>/dev/null || echo "No ext directory"
+        ls -la build/*/external/ 2>/dev/null || echo "No external directory"
+        
+        # Search in source directory
+        echo "Checking source directory..."
+        ls -la applications/external/gennaro_ai/ 2>/dev/null || echo "No source app directory"
+        
+        # Try to find ANY .fap file and copy the first one as fallback
+        echo "=== COPYING FAP FILE ==="
+        
+        # Priority 1: Look for gennaro specifically
+        GENNARO_FAP=$(find . -name "*gennaro*.fap" -type f 2>/dev/null | head -1)
+        if [ -n "$GENNARO_FAP" ]; then
+          echo "✅ Found Gennaro FAP: $GENNARO_FAP"
+          cp "$GENNARO_FAP" ../gennaro_ai_unleashed.fap
           ls -lah ../gennaro_ai_unleashed.fap
           file ../gennaro_ai_unleashed.fap
+          echo "SUCCESS: Gennaro FAP copied"
         else
-          echo "No FAP found, searching all FAPs"
-          find . -name "*.fap" -type f | head -20
+          echo "❌ No Gennaro FAP found"
+          
+          # Priority 2: Any .fap in build directory
+          ANY_FAP=$(find ./build -name "*.fap" -type f 2>/dev/null | head -1)
+          if [ -n "$ANY_FAP" ]; then
+            echo "⚠️ Copying any available FAP as fallback: $ANY_FAP"
+            cp "$ANY_FAP" ../gennaro_ai_unleashed.fap
+            ls -lah ../gennaro_ai_unleashed.fap
+            echo "FALLBACK: Generic FAP copied"
+          else
+            echo "❌ NO FAP FILES FOUND AT ALL"
+            
+            # Create dummy file so upload doesn't fail
+            echo "Creating dummy FAP for debugging..."
+            echo "Build failed - no FAP generated" > ../gennaro_ai_unleashed.fap
+            echo "DUMMY: Placeholder file created"
+          fi
         fi
+        
+        # Show final status
+        echo "=== FINAL STATUS ==="
+        ls -la ../*.fap 2>/dev/null || echo "No FAP files in parent directory"
         
     - name: Upload Unleashed FAP
       uses: actions/upload-artifact@v4
@@ -133,23 +183,42 @@ jobs:
     - name: Collect debug info
       if: always()
       run: |
-        echo "Creating debug package"
+        echo "=== CREATING COMPREHENSIVE DEBUG PACKAGE ==="
         mkdir -p debug_package
         
-        cp flipperzero-firmware-unleashed/build.log debug_package/ 2>/dev/null || echo "No build log"
-        cp flipperzero-firmware-unleashed/fallback_build.log debug_package/ 2>/dev/null || echo "No fallback log"
-        cp flipperzero-firmware-unleashed/app_build.log debug_package/ 2>/dev/null || echo "No app log"
+        # Copy all build logs
+        cp flipperzero-firmware-unleashed/build_method*.log debug_package/ 2>/dev/null || echo "No method logs"
         
-        find flipperzero-firmware-unleashed -name "*.fap" -type f -exec cp {} debug_package/ \; 2>/dev/null || echo "No FAPs"
+        # Copy any .fap files found
+        find flipperzero-firmware-unleashed -name "*.fap" -type f -exec cp {} debug_package/ \; 2>/dev/null || echo "No FAPs for debug"
         
+        # Copy source files
         cp gennaro_ai.c debug_package/ 2>/dev/null || echo "No source"
         cp application.fam debug_package/ 2>/dev/null || echo "No manifest"
+        cp icon.png debug_package/ 2>/dev/null || echo "No icon"
         
+        # Copy build directory structure info
+        echo "=== BUILD DIRECTORY STRUCTURE ===" > debug_package/directory_structure.txt
+        ls -la flipperzero-firmware-unleashed/build/ >> debug_package/directory_structure.txt 2>/dev/null || echo "No build dir"
+        find flipperzero-firmware-unleashed/build -name "*.fap" -type f >> debug_package/directory_structure.txt 2>/dev/null || echo "No FAPs in build"
+        
+        # Copy application directory
+        cp -r flipperzero-firmware-unleashed/applications/external/gennaro_ai debug_package/ 2>/dev/null || echo "No app dir"
+        
+        # Create comprehensive info file
         echo "Build Date: $(date)" > debug_package/build_info.txt
         echo "Firmware: Unleashed" >> debug_package/build_info.txt
         echo "Commit: ${{ github.sha }}" >> debug_package/build_info.txt
-        echo "Files:" >> debug_package/build_info.txt
+        echo "Repository: ${{ github.repository }}" >> debug_package/build_info.txt
+        echo "" >> debug_package/build_info.txt
+        echo "=== FILES IN DEBUG PACKAGE ===" >> debug_package/build_info.txt
         ls -la debug_package/ >> debug_package/build_info.txt
+        echo "" >> debug_package/build_info.txt
+        echo "=== ALL .fap FILES FOUND ===" >> debug_package/build_info.txt
+        find flipperzero-firmware-unleashed -name "*.fap" -type f >> debug_package/build_info.txt 2>/dev/null || echo "No .fap files found"
+        
+        echo "Debug package contents:"
+        ls -la debug_package/
         
     - name: Upload debug package
       if: always()

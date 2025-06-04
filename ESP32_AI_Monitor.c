@@ -8,8 +8,6 @@
 #include <gui/modules/dialog_ex.h>
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
-#include <expansion/expansion.h>
-#include <cli/cli.h>
 
 #define TAG "ESP32_AI_Monitor"
 #define UART_CH (FuriHalSerialIdUsart)
@@ -196,13 +194,13 @@ void esp32_ai_scene_main_on_enter(void* context) {
     submenu_reset(submenu);
     submenu_set_header(submenu, "ESP32-CAM AI Monitor");
     
-    submenu_add_item(submenu, "📷 Vision Analysis", ESP32_AI_EventVision, NULL);
-    submenu_add_item(submenu, "🧮 Math Solver", ESP32_AI_EventMath, NULL);
-    submenu_add_item(submenu, "📖 Text OCR", ESP32_AI_EventOCR, NULL);
-    submenu_add_item(submenu, "🔢 Object Count", ESP32_AI_EventCount, NULL);
-    submenu_add_item(submenu, "💡 Flash Control", ESP32_AI_EventFlashToggle, NULL);
-    submenu_add_item(submenu, "🎤 Voice Record", ESP32_AI_EventPTTStart, NULL);
-    submenu_add_item(submenu, "📊 System Status", ESP32_AI_EventStatus, NULL);
+    submenu_add_item(submenu, "Vision Analysis", ESP32_AI_EventVision, NULL);
+    submenu_add_item(submenu, "Math Solver", ESP32_AI_EventMath, NULL);
+    submenu_add_item(submenu, "Text OCR", ESP32_AI_EventOCR, NULL);
+    submenu_add_item(submenu, "Object Count", ESP32_AI_EventCount, NULL);
+    submenu_add_item(submenu, "Flash Control", ESP32_AI_EventFlashToggle, NULL);
+    submenu_add_item(submenu, "Voice Record", ESP32_AI_EventPTTStart, NULL);
+    submenu_add_item(submenu, "System Status", ESP32_AI_EventStatus, NULL);
     
     view_dispatcher_switch_to_view(app->view_dispatcher, ESP32_AI_ViewSubmenu);
 }
@@ -270,7 +268,7 @@ void esp32_ai_scene_ptt_record_on_enter(void* context) {
     DialogEx* dialog = app->dialog_ex;
     
     dialog_ex_set_header(dialog, "Voice Recording", 64, 10, AlignCenter, AlignTop);
-    dialog_ex_set_text(dialog, "🎤 RECORDING...\n\nHold OK to record\nRelease to process\n\nPress Back to cancel", 64, 32, AlignCenter, AlignTop);
+    dialog_ex_set_text(dialog, "Recording...\n\nHold OK to record\nRelease to process\n\nPress Back to cancel", 64, 32, AlignCenter, AlignTop);
     dialog_ex_set_left_button_text(dialog, "Back");
     dialog_ex_set_center_button_text(dialog, "Hold to Record");
     
@@ -323,7 +321,7 @@ void esp32_ai_scene_response_on_enter(void* context) {
     TextBox* text_box = app->text_box;
     
     text_box_reset(text_box);
-    text_box_set_text(text_box, "⏳ Waiting for ESP32 response...");
+    text_box_set_text(text_box, "Waiting for ESP32 response...");
     text_box_set_focus(text_box, TextBoxFocusStart);
     
     view_dispatcher_switch_to_view(app->view_dispatcher, ESP32_AI_ViewTextBox);
@@ -333,7 +331,7 @@ void esp32_ai_scene_response_on_enter(void* context) {
         text_box_set_text(text_box, furi_string_get_cstr(app->response_text));
         notification_message(app->notifications, &sequence_success);
     } else {
-        text_box_set_text(text_box, "❌ No response from ESP32\nCheck connections:\n- Pin 13 (TX) → ESP32 RX\n- Pin 14 (RX) → ESP32 TX\n- Pin 8/18 (GND) → ESP32 GND\n- Pin 1 (5V) → ESP32 5V");
+        text_box_set_text(text_box, "No response from ESP32\nCheck connections:\n- Pin 13 (TX) -> ESP32 RX\n- Pin 14 (RX) -> ESP32 TX\n- Pin 8/18 (GND) -> ESP32 GND\n- Pin 1 (5V) -> ESP32 5V");
         notification_message(app->notifications, &sequence_error);
     }
 }

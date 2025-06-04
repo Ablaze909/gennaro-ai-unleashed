@@ -83,6 +83,9 @@ struct ESP32CamAI {
     bool flash_status;
     bool response_updated;
     
+    // Navigation state
+    uint32_t current_scene;
+    
     // Settings
     uint32_t baudrate;
 };
@@ -611,10 +614,8 @@ static bool esp32_cam_ai_navigation_exit_callback(void* context) {
     furi_assert(context);
     ESP32CamAI* app = (ESP32CamAI*)context;
     
-    // Handle back navigation based on current scene
-    uint32_t current_scene = scene_manager_get_scene_id(app->scene_manager);
-    
-    if(current_scene == ESP32CamAISceneStart) {
+    // Check current scene and handle back navigation
+    if(app->current_scene == ESP32CamAISceneStart) {
         // Only exit from start scene
         return false; // Allow exit
     } else {

@@ -1,10 +1,8 @@
-name: Build Gennaro AI FAP for Unleashed Firmware
+name: Build Gennaro AI for Official Firmware
 
 on:
   push:
-    branches: [ main, master, dev ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [main, master, dev]
   workflow_dispatch:
 
 jobs:
@@ -12,132 +10,46 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
+    - uses: actions/checkout@v4
+      
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git wget curl build-essential python3 python3-pip
+        sudo apt-get install -y git wget curl build-essential python3
         
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        
-    - name: Cache Unleashed firmware
-      uses: actions/cache@v3
-      with:
-        path: flipperzero-firmware-unleashed
-        key: unleashed-fw-${{ hashFiles('**/build.yml') }}-v1
-        restore-keys: |
-          unleashed-fw-v1-
-          unleashed-fw-
-        
-    - name: Clone Unleashed firmware
+    - name: Clone Official Flipper firmware
       run: |
-        if [ ! -d "flipperzero-firmware-unleashed" ]; then
-          echo "Cloning Unleashed firmware"
-          git clone --recursive --depth 1 https://github.com/DarkFlippers/unleashed-firmware.git flipperzero-firmware-unleashed
-          cd flipperzero-firmware-unleashed
-          git submodule update --init --recursive
-        else
-          echo "Using cached Unleashed firmware"
-          cd flipperzero-firmware-unleashed
-          git pull origin dev || echo "Pull failed, using cached version"
-          git submodule update --recursive || echo "Submodule update failed"
-        fi
+        git clone --recursive --depth 1 https://github.com/flipperdevices/flipperzero-firmware.git
+        cd flipperzero-firmware
+        git submodule update --init --recursive
         
-    - name: Verify FBT tool
+    - name: Create icon
       run: |
-        cd flipperzero-firmware-unleashed
-        ./fbt --help
-        
-    - name: Create clean app directory
-      run: |
-        echo "Creating clean app directory"
-        rm -rf flipperzero-firmware-unleashed/applications/external/gennaro_ai
-        mkdir -p flipperzero-firmware-unleashed/applications/external/gennaro_ai
-        
-    - name: Create application icon
-      run: |
-        echo "Creating application icon"
         python3 -c "
         import base64
-        png_data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVBiVpY+xDQAgCAS/xgk6gx3AlThCJ3AER+gMduAEJsbGhISGXHI/jyQAAP//ZgZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmaH8AEMU5AK1dCd/gAAAABJRU5ErkJggg==')
-        with open('icon.png', 'wb') as f:
-            f.write(png_data)
-        print('Icon created successfully')
+        data = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVBiVpY+xDQAgCAS/xgk6gx3AlThCJ3AER+gMduAEJsbGhISGXHI/jyQAAP//ZgZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmaH8AEMU5AK1dCd/gAAAABJRU5ErkJggg==')
+        open('icon.png', 'wb').write(data)
         "
-        ls -la icon.png
         
-    - name: Copy application files
+    - name: Setup app
       run: |
-        echo "Copying application files"
-        rm -rf flipperzero-firmware-unleashed/applications/external/gennaro_ai
-        mkdir -p flipperzero-firmware-unleashed/applications/external/gennaro_ai
+        mkdir -p flipperzero-firmware/applications/external/gennaro_ai
+        cp gennaro_ai.c flipperzero-firmware/applications/external/gennaro_ai/
+        cp application.fam flipperzero-firmware/applications/external/gennaro_ai/
+        cp icon.png flipperzero-firmware/applications/external/gennaro_ai/
         
-        cp gennaro_ai.c flipperzero-firmware-unleashed/applications/external/gennaro_ai/
-        cp application.fam flipperzero-firmware-unleashed/applications/external/gennaro_ai/
-        cp icon.png flipperzero-firmware-unleashed/applications/external/gennaro_ai/
-        
-        echo "Verifying copied files"
-        ls -la flipperzero-firmware-unleashed/applications/external/gennaro_ai/
-        
-        echo "Application manifest content"
-        cat flipperzero-firmware-unleashed/applications/external/gennaro_ai/application.fam
-        
-    - name: Build Gennaro AI FAP
+    - name: Build
       run: |
-        cd flipperzero-firmware-unleashed
-        echo "Building with Unleashed firmware"
+        cd flipperzero-firmware
+        ./fbt fap_dist
         
-        echo "Creating dummy manifest for build system"
-        echo "# Dummy manifest" > applications/external/application.fam
-        
-        echo "Trying faps command"
-        ./fbt faps 2>&1 | tee build.log || echo "faps failed"
-        
-        echo "Searching for any FAP files"
-        find . -name "*.fap" -type f | head -10
-        
-    - name: Locate and copy FAP
+    - name: Find and copy FAP
       run: |
-        cd flipperzero-firmware-unleashed
-        echo "Searching for built FAP"
-        
-        FAP_FILE=$(find . -name "*gennaro*.fap" -type f | head -1)
-        if [ -n "$FAP_FILE" ]; then
-          echo "Found FAP: $FAP_FILE"
-          cp "$FAP_FILE" ../gennaro_ai.fap
-          ls -lah ../gennaro_ai.fap
-        else
-          echo "No gennaro FAP found"
-          ANY_FAP=$(find ./build -name "*.fap" -type f | head -1)
-          if [ -n "$ANY_FAP" ]; then
-            echo "Using any FAP as fallback: $ANY_FAP"
-            cp "$ANY_FAP" ../gennaro_ai.fap
-          else
-            echo "No FAP files found at all"
-            echo "Build failed" > ../gennaro_ai.fap
-          fi
-        fi
+        cd flipperzero-firmware
+        find . -name "*gennaro*.fap" -exec cp {} ../gennaro_ai.fap \;
         
     - name: Upload FAP
       uses: actions/upload-artifact@v4
       with:
-        name: gennaro_ai_unleashed
-        path: "gennaro_ai.fap"
-        retention-days: 30
-        if-no-files-found: warn
-        
-    - name: Upload debug logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build_logs
-        path: "flipperzero-firmware-unleashed/build.log"
-        retention-days: 7
-        if-no-files-found: ignore
+        name: gennaro_ai_official
+        path: gennaro_ai.fap

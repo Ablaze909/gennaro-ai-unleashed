@@ -1,90 +1,62 @@
-name: Build ESP32-AI-Monitor FAP
+naname: "Build ESP32-AI-Monitor FAP"
 
 on:
   push:
     branches: [ main, dev ]
   pull_request:
     branches: [ main ]
+  release:
+    types: [published]
 
 jobs:
-  build-unleashed:
+  ufbt-build-action:
     runs-on: ubuntu-latest
-    
+    strategy:
+      matrix:
+        include:
+          - name: "Official Release"
+            sdk-channel: release
+          - name: "Official Dev"
+            sdk-channel: dev
+          - name: "Unleashed Firmware"
+            sdk-index-url: https://up.unleashedflip.com/directory.json
+            sdk-channel: dev
+            
+    name: 'Build for ${{ matrix.name }}'
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Checkout
+        uses: actions/checkout@v4
         
-    - name: Install uFBT
-      run: |
-        python -m pip install --upgrade pip
-        pip install ufbt
-        
-    - name: Get latest Unleashed release
-      id: unleashed_release
-      run: |
-        RELEASE_URL=$(curl -s https://api.github.com/repos/DarkFlippers/unleashed-firmware/releases/latest | grep "browser_download_url.*sdk.*zip" | cut -d '"' -f 4)
-        echo "sdk_url=$RELEASE_URL" >> $GITHUB_OUTPUT
-        echo "📦 Using SDK: $RELEASE_URL"
-        
-    - name: Setup uFBT with Unleashed SDK
-      run: |
-        ufbt update --hw-target=f7 --url="${{ steps.unleashed_release.outputs.sdk_url }}"
-        
-    - name: Verify uFBT setup
-      run: |
-        ufbt --version
-        ufbt -s APIVERSION
-        ufbt -s HARDWARE_TARGET
-        
-    - name: Build FAP
-      run: |
-        ufbt build
-        
-    - name: Check build output
-      run: |
-        echo "📁 Build outputs:"
-        find . -name "*.fap" -type f -exec ls -la {} \;
-        
-    - name: Upload FAP
-      uses: actions/upload-artifact@v4
-      with:
-        name: esp32-ai-monitor-unleashed
-        path: "**/*.fap"
-        retention-days: 30
+      - name: Build with uFBT
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        id: build-app
+        with:
+          sdk-channel: ${{ matrix.sdk-channel }}
+          sdk-index-url: ${{ matrix.sdk-index-url }}
+          
+      - name: Upload FAP artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-ai-monitor-${{ steps.build-app.outputs.suffix }}
+          path: ${{ steps.build-app.outputs.fap-artifacts }}
+          retention-days: 30
+          
+      - name: Show build info
+        run: |
+          echo "🎯 Build completed successfully!"
+          echo "📦 Firmware API: ${{ steps.build-app.outputs.firmware-api }}"
+          echo "🔧 Build suffix: ${{ steps.build-app.outputs.suffix }}"
+          echo "📁 Artifacts: ${{ steps.build-app.outputs.fap-artifacts }}"
 
-  build-official:
+  lint:
     runs-on: ubuntu-latest
-    
+    name: 'Lint code'
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Checkout
+        uses: actions/checkout@v4
         
-    - name: Install uFBT
-      run: |
-        python -m pip install --upgrade pip
-        pip install ufbt
-        
-    - name: Setup uFBT for Official
-      run: |
-        ufbt update --channel=release
-        
-    - name: Build FAP
-      run: |
-        ufbt build
-        
-    - name: Upload FAP
-      uses: actions/upload-artifact@v4
-      with:
-        name: esp32-ai-monitor-official
-        path: "**/*.fap"
-        retention-days: 30
+      - name: Lint with uFBT
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        with:
+          task: lint
+          sdk-channel: dev

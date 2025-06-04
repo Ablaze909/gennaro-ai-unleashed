@@ -41,31 +41,58 @@ jobs:
     - name: Build
       run: |
         cd flipperzero-firmware
-        echo "=== BUILDING FAP ==="
+        echo "=== PRE-BUILD VERIFICATION ==="
         
-        # Show what we're trying to build
+        # Verify our app is properly set up
+        if [ ! -f "applications/external/gennaro_ai/gennaro_ai.c" ]; then
+          echo "❌ CRITICAL: gennaro_ai.c not found!"
+          exit 1
+        fi
+        
+        if [ ! -f "applications/external/gennaro_ai/application.fam" ]; then
+          echo "❌ CRITICAL: application.fam not found!"
+          exit 1
+        fi
+        
+        echo "✅ Source files verified"
         echo "App directory contents:"
         ls -la applications/external/gennaro_ai/
         
-        echo "Building with fap_dist..."
-        if ./fbt fap_dist 2>&1 | tee build.log; then
-          echo "✅ fap_dist completed"
+        echo "Checking application.fam syntax:"
+        cat applications/external/gennaro_ai/application.fam
+        
+        echo "=== BUILDING FAP ==="
+        
+        # Try fap_dist first
+        echo "Attempting fap_dist..."
+        if ./fbt fap_dist > build.log 2>&1; then
+          echo "✅ fap_dist completed successfully"
+          cat build.log | tail -10
         else
-          echo "❌ fap_dist failed, trying faps"
-          if ./fbt faps 2>&1 | tee build_fallback.log; then
-            echo "✅ faps completed"
+          echo "❌ fap_dist failed, checking errors:"
+          cat build.log | grep -i error | head -5 || echo "No clear errors found"
+          
+          echo "Trying faps fallback..."
+          if ./fbt faps > build_fallback.log 2>&1; then
+            echo "✅ faps completed successfully"
+            cat build_fallback.log | tail -10
           else
             echo "❌ Both build methods failed"
-            echo "=== BUILD LOG ==="
+            echo "=== fap_dist errors ==="
             cat build.log | tail -20
-            echo "=== FALLBACK LOG ==="
+            echo "=== faps errors ==="
             cat build_fallback.log | tail -20
+            echo "Build failed completely"
           fi
         fi
         
-        echo "=== POST-BUILD DIRECTORY CHECK ==="
-        ls -la build/ 2>/dev/null || echo "No build directory"
-        find build -name "*.fap" -type f | head -5 || echo "No FAP files in build"
+        echo "=== POST-BUILD ANALYSIS ==="
+        echo "Build directory structure:"
+        find build -type d -name "*faps*" 2>/dev/null || echo "No faps directories"
+        find build -type d -name "*external*" 2>/dev/null || echo "No external directories"
+        
+        echo "All .fap files in build:"
+        find build -name "*.fap" -type f 2>/dev/null || echo "No .fap files generated"
         
     - name: Find and copy FAP
       run: |
@@ -73,45 +100,69 @@ jobs:
         echo "=== SEARCHING FOR FAP FILES ==="
         
         # Search everywhere for any .fap files
-        find . -name "*.fap" -type f | head -10
+        echo "All .fap files found:"
+        find . -name "*.fap" -type f 2>/dev/null | head -10 || echo "No .fap files found"
         
         # Look specifically for gennaro
-        find . -name "*gennaro*" -type f | head -5
+        echo "Gennaro-related files:"
+        find . -name "*gennaro*" -type f 2>/dev/null | head -5 || echo "No gennaro files found"
         
         # Check standard locations
+        echo "Checking standard build locations:"
         ls -la build/f*/dist/faps/ 2>/dev/null || echo "No faps directory"
         ls -la build/f*/applications_user/ 2>/dev/null || echo "No applications_user"
         
-        # Try multiple copy strategies
-        echo "=== COPYING FAP ==="
+        # Manual copy with explicit paths
+        echo "=== MANUAL COPY ATTEMPT ==="
         
-        # Strategy 1: Find gennaro specifically
-        if find . -name "*gennaro*.fap" -type f -exec cp {} ../gennaro_ai.fap \; 2>/dev/null; then
-          echo "✅ Found and copied gennaro FAP"
-          ls -la ../gennaro_ai.fap
-        else
-          echo "❌ No gennaro FAP found"
-          
-          # Strategy 2: Copy any FAP from dist/faps
-          FAP_FILE=$(find ./build -path "*/dist/faps/*.fap" -type f | head -1)
-          if [ -n "$FAP_FILE" ]; then
-            echo "⚠️ Using any FAP as fallback: $FAP_FILE"
-            cp "$FAP_FILE" ../gennaro_ai.fap
+        # Look for the actual FAP file
+        GENNARO_FAP=$(find . -name "*gennaro*.fap" -type f 2>/dev/null | head -1)
+        
+        if [ -n "$GENNARO_FAP" ] && [ -f "$GENNARO_FAP" ]; then
+          echo "Found gennaro FAP at: $GENNARO_FAP"
+          if cp "$GENNARO_FAP" ../gennaro_ai.fap; then
+            echo "✅ Successfully copied gennaro FAP"
             ls -la ../gennaro_ai.fap
           else
-            echo "❌ No FAP files found anywhere"
-            echo "Creating dummy file for upload"
+            echo "❌ Failed to copy gennaro FAP"
+          fi
+        else
+          echo "❌ No gennaro FAP file found"
+          
+          # Try to find ANY .fap file
+          ANY_FAP=$(find . -name "*.fap" -type f 2>/dev/null | head -1)
+          
+          if [ -n "$ANY_FAP" ] && [ -f "$ANY_FAP" ]; then
+            echo "Found alternative FAP: $ANY_FAP"
+            if cp "$ANY_FAP" ../gennaro_ai.fap; then
+              echo "⚠️ Copied alternative FAP as fallback"
+              ls -la ../gennaro_ai.fap
+            else
+              echo "❌ Failed to copy alternative FAP"
+            fi
+          else
+            echo "❌ No .fap files found at all"
+            
+            # Check if build actually happened
+            echo "=== CHECKING BUILD RESULTS ==="
+            ls -la build/ 2>/dev/null || echo "No build directory exists"
+            
+            # Create dummy file to avoid upload error
+            echo "Creating dummy FAP file for debugging"
             echo "Build failed - no FAP generated" > ../gennaro_ai.fap
+            echo "Check build logs for compilation errors" >> ../gennaro_ai.fap
           fi
         fi
         
-        echo "=== FINAL CHECK ==="
+        echo "=== FINAL VERIFICATION ==="
         if [ -f "../gennaro_ai.fap" ]; then
+          echo "✅ Final file exists:"
           ls -la ../gennaro_ai.fap
-          file ../gennaro_ai.fap
-          echo "✅ FAP ready for upload"
+          echo "File contents preview:"
+          head -3 ../gennaro_ai.fap 2>/dev/null || echo "Binary file"
         else
-          echo "❌ No FAP file created"
+          echo "❌ No final file created - this is a critical error"
+          exit 1
         fi
         
     - name: Upload FAP

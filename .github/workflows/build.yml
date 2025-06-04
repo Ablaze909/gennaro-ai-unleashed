@@ -76,20 +76,59 @@ jobs:
     - name: Copy application files
       run: |
         echo "Copying application files"
+        
+        # Ensure target directory is clean
+        rm -rf flipperzero-firmware-unleashed/applications/external/gennaro_ai
+        mkdir -p flipperzero-firmware-unleashed/applications/external/gennaro_ai
+        
+        # Copy files with explicit paths and verification
+        echo "Copying gennaro_ai.c..."
         cp gennaro_ai.c flipperzero-firmware-unleashed/applications/external/gennaro_ai/
+        
+        echo "Copying application.fam..."
         cp application.fam flipperzero-firmware-unleashed/applications/external/gennaro_ai/
+        
+        echo "Copying icon..."
         cp icon.png flipperzero-firmware-unleashed/applications/external/gennaro_ai/
         
-        echo "Verifying copied files"
+        echo "=== Verifying ALL files are copied correctly ==="
         ls -la flipperzero-firmware-unleashed/applications/external/gennaro_ai/
         
-        echo "Application manifest content"
+        echo "=== Checking application.fam content ==="
         cat flipperzero-firmware-unleashed/applications/external/gennaro_ai/application.fam
+        
+        echo "=== Checking if application.fam is valid ==="
+        if [ ! -f "flipperzero-firmware-unleashed/applications/external/gennaro_ai/application.fam" ]; then
+          echo "❌ ERROR: application.fam not found after copy!"
+          exit 1
+        else
+          echo "✅ application.fam exists"
+        fi
+        
+        echo "=== Checking external apps directory structure ==="
+        ls -la flipperzero-firmware-unleashed/applications/external/
+        
+        echo "=== Files copied successfully ==="
         
     - name: Build Gennaro AI FAP (Unleashed)
       run: |
         cd flipperzero-firmware-unleashed
         echo "Building with Unleashed firmware"
+        
+        # Double-check our app is correctly placed
+        echo "=== FINAL VERIFICATION BEFORE BUILD ==="
+        if [ ! -f "applications/external/gennaro_ai/application.fam" ]; then
+          echo "❌ CRITICAL ERROR: application.fam not found in expected location!"
+          echo "Expected: applications/external/gennaro_ai/application.fam"
+          echo "Contents of applications/external/:"
+          ls -la applications/external/
+          echo "Contents of applications/external/gennaro_ai/:"
+          ls -la applications/external/gennaro_ai/ || echo "Directory does not exist!"
+          exit 1
+        fi
+        
+        echo "✅ application.fam found in correct location"
+        echo "✅ App structure looks good"
         
         # Check if our app source exists and is valid
         echo "=== Verifying source files ==="
@@ -98,21 +137,15 @@ jobs:
           exit 1
         fi
         
-        if [ ! -f "applications/external/gennaro_ai/application.fam" ]; then
-          echo "❌ Manifest file missing!"
-          exit 1
-        fi
-        
         echo "✅ Source files present"
         wc -l applications/external/gennaro_ai/gennaro_ai.c
-        echo "Checking for syntax errors..."
         
         # Try multiple build methods in sequence
         BUILD_SUCCESS=false
         
         echo "=== Method 1: Direct app build ==="
         if ./fbt fap_gennaro_ai 2>&1 | tee build_method1.log; then
-          if [ -f build/*/dist/faps/gennaro_ai.fap ]; then
+          if find build -name "*gennaro*.fap" -type f | grep -q .; then
             echo "✅ Method 1 SUCCESS - FAP found"
             BUILD_SUCCESS=true
           fi
@@ -142,7 +175,9 @@ jobs:
         if [ "$BUILD_SUCCESS" = false ]; then
           echo "❌ All build methods failed"
           echo "Checking for any compilation errors..."
-          grep -i "error" build_method*.log || echo "No obvious errors found"
+          grep -i "error" build_method*.log || echo "No obvious errors found in logs"
+          echo "Checking for missing dependencies..."
+          grep -i "missing\|not found" build_method*.log || echo "No missing dependencies found"
         else
           echo "✅ Build completed successfully"
         fi
@@ -292,9 +327,9 @@ jobs:
         echo "- ✅ Receives ESP32 AI Responses" >> release_notes.md
         echo "- ✅ Software Bit-banging UART" >> release_notes.md
         echo "- ✅ Stable GPIO Communication" >> release_notes.md
-        echo "- ✅ 5 AI Commands (Vision, Math, OCR, Status, Refresh)" >> release_notes.md
-        echo "- ✅ Timestamped Message Log" >> release_notes.md
-        echo "- ✅ Manual Control (No Timer Issues)" >> release_notes.md
+        echo "- ✅ ESP32-CAM AI Commands integrated" >> release_notes.md
+        echo "- ✅ Live Console Monitor" >> release_notes.md
+        echo "- ✅ Custom Command Input" >> release_notes.md
         echo "" >> release_notes.md
         echo "## Hardware Requirements" >> release_notes.md
         echo "- Flipper Zero with Unleashed Firmware" >> release_notes.md

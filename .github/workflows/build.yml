@@ -5,16 +5,10 @@ on:
     branches: [ main, dev ]
   pull_request:
     branches: [ main ]
-  release:
-    types: [published]
 
 jobs:
-  build:
+  build-unleashed:
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        firmware: [unleashed, official]
     
     steps:
     - name: Checkout repository
@@ -25,18 +19,54 @@ jobs:
       with:
         python-version: '3.11'
         
-    - name: Install dependencies
+    - name: Install uFBT
       run: |
         python -m pip install --upgrade pip
         pip install ufbt
         
     - name: Setup uFBT for Unleashed
-      if: matrix.firmware == 'unleashed'
       run: |
-        ufbt update --url=https://github.com/DarkFlippers/unleashed-firmware
+        ufbt update --hw-target=f7 --url=https://github.com/DarkFlippers/unleashed-firmware
+        
+    - name: Verify uFBT setup
+      run: |
+        ufbt --version
+        ufbt -s APIVERSION
+        
+    - name: Build FAP
+      run: |
+        ufbt build
+        
+    - name: List build outputs
+      run: |
+        echo "📁 Build outputs:"
+        find dist -name "*.fap" -type f -exec ls -la {} \;
+        
+    - name: Upload FAP
+      uses: actions/upload-artifact@v4
+      with:
+        name: esp32-ai-monitor-unleashed
+        path: dist/*.fap
+        retention-days: 30
+
+  build-official:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install uFBT
+      run: |
+        python -m pip install --upgrade pip
+        pip install ufbt
         
     - name: Setup uFBT for Official
-      if: matrix.firmware == 'official'
       run: |
         ufbt update --channel=release
         
@@ -44,40 +74,9 @@ jobs:
       run: |
         ufbt build
         
-    - name: Get build info
-      id: build_info
-      run: |
-        echo "build_date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
-        
-    - name: Prepare artifacts
-      run: |
-        mkdir -p artifacts
-        cp dist/*.fap artifacts/
-        
-        # Rinomina con versione firmware
-        cd artifacts
-        for file in *.fap; do
-          base_name=$(basename "$file" .fap)
-          mv "$file" "${base_name}_${{ matrix.firmware }}_${{ steps.build_info.outputs.build_date }}.fap"
-        done
-        
-    - name: Upload FAP artifacts
+    - name: Upload FAP
       uses: actions/upload-artifact@v4
       with:
-        name: esp32-ai-monitor-${{ matrix.firmware }}
-        path: artifacts/
+        name: esp32-ai-monitor-official
+        path: dist/*.fap
         retention-days: 30
-        
-    - name: Create release assets
-      if: github.event_name == 'release'
-      run: |
-        cd artifacts
-        zip -r ../esp32-ai-monitor-${{ matrix.firmware }}.zip .
-        
-    - name: Upload to release
-      if: github.event_name == 'release'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: esp32-ai-monitor-${{ matrix.firmware }}.zip
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

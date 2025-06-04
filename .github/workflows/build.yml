@@ -24,29 +24,37 @@ jobs:
         python -m pip install --upgrade pip
         pip install ufbt
         
-    - name: Setup uFBT for Unleashed
+    - name: Get latest Unleashed release
+      id: unleashed_release
       run: |
-        ufbt update --hw-target=f7 --url=https://github.com/DarkFlippers/unleashed-firmware
+        RELEASE_URL=$(curl -s https://api.github.com/repos/DarkFlippers/unleashed-firmware/releases/latest | grep "browser_download_url.*sdk.*zip" | cut -d '"' -f 4)
+        echo "sdk_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+        echo "📦 Using SDK: $RELEASE_URL"
+        
+    - name: Setup uFBT with Unleashed SDK
+      run: |
+        ufbt update --hw-target=f7 --url="${{ steps.unleashed_release.outputs.sdk_url }}"
         
     - name: Verify uFBT setup
       run: |
         ufbt --version
         ufbt -s APIVERSION
+        ufbt -s HARDWARE_TARGET
         
     - name: Build FAP
       run: |
         ufbt build
         
-    - name: List build outputs
+    - name: Check build output
       run: |
         echo "📁 Build outputs:"
-        find dist -name "*.fap" -type f -exec ls -la {} \;
+        find . -name "*.fap" -type f -exec ls -la {} \;
         
     - name: Upload FAP
       uses: actions/upload-artifact@v4
       with:
         name: esp32-ai-monitor-unleashed
-        path: dist/*.fap
+        path: "**/*.fap"
         retention-days: 30
 
   build-official:
@@ -78,5 +86,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: esp32-ai-monitor-official
-        path: dist/*.fap
+        path: "**/*.fap"
         retention-days: 30
